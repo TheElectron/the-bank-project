@@ -18,6 +18,16 @@ a receber as primeiras regras de negócio/qualidade:
   - Valores categóricos originalmente em tcheco (códigos do dataset Berka)
     são traduzidos/adaptados para português brasileiro.
 
+Após o tratamento por tabela, o schema original de 8 tabelas do Berka é
+reorganizado para simplificar os relacionamentos (preparação para a etapa
+de dados sintéticos): `disp` + `card` são consolidadas em `client`, e
+`loan` é consolidada em `account` — ambos os merges são 1:1 sem perda de
+dado, validados contra os dados reais (ver README). `district` é mantida
+como tabela dimensão separada (referenciada por `account`/`client`), só
+com as colunas A1..A16 renomeadas para nomes descritivos. O resultado
+final gravado em `silver/real/` passa a ter 5 tabelas em vez de 8:
+`district`, `client`, `account`, `order`, `trans`.
+
 --------------------------------------------------------------------------
 PRÉ-REQUISITOS
 --------------------------------------------------------------------------
@@ -603,28 +613,189 @@ def process_table(df: pd.DataFrame, table_name: str) -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------------
+# 9) Reorganização da Silver/real: simplifica os relacionamentos entre as
+#    8 tabelas originais do Berka, em preparação para a etapa de dados
+#    sintéticos. `disp` + `card` são consolidadas em `client`; `loan` é
+#    consolidada em `account`; `district` só tem as colunas renomeadas.
+#    Os três merges usados abaixo são 1:1 (nunca 1:N) — validado contra os
+#    dados reais antes da implementação (ver README): todo client tem
+#    exatamente 1 disp; todo card pertence a um disp TITULAR único; toda
+#    account tem no máximo 1 loan. `validate="one_to_one"` faz o pandas
+#    barrar a gravação caso essa premissa deixe de valer no futuro (ex.:
+#    uma atualização do dataset fonte).
+# --------------------------------------------------------------------------
+DISTRICT_COLUMN_RENAME: dict[str, str] = {
+    "A1": "district_id",
+    "A2": "district_name",
+    "A3": "region",
+    "A4": "population",
+    "A5": "municipalities_under_499",
+    "A6": "municipalities_500_1999",
+    "A7": "municipalities_2000_9999",
+    "A8": "municipalities_over_10000",
+    "A9": "cities",
+    "A10": "urban_population_ratio",
+    "A11": "average_salary",
+    "A12": "unemployment_rate_1995",
+    "A13": "unemployment_rate_1996",
+    "A14": "entrepreneurs_per_1000",
+    "A15": "crimes_1995",
+    "A16": "crimes_1996",
+}
+
+
+def rename_district_columns(district_df: pd.DataFrame) -> pd.DataFrame:
+    """Renomeia as colunas A1..A16 de `district` para nomes descritivos.
+
+    Os dados (linhas e valores) permanecem inalterados; apenas os nomes
+    de coluna mudam, conforme `DISTRICT_COLUMN_RENAME`. `A1` vira
+    `district_id`, para casar com o nome já usado nas FKs
+    `account.district_id`/`client.district_id`.
+
+    Args:
+        district_df: DataFrame tratado da tabela `district`.
+
+    Returns:
+        Cópia do DataFrame com as colunas renomeadas.
+    """
+    return district_df.rename(columns=DISTRICT_COLUMN_RENAME)
+
+
+def build_client_table(client_df: pd.DataFrame, disp_df: pd.DataFrame, card_df: pd.DataFrame) -> pd.DataFrame:
+    """Consolida `disp` + `card` dentro de `client` (merges 1:1).
+
+    - `disp` contribui com `account_id` (a conta do cliente) e `type`
+      (renomeada para `relationship_type`: TITULAR/DEPENDENTE).
+    - `card` contribui com `card_id`, `card_type` e `card_issued`
+      (nulos para os ~80% dos titulares sem cartão e para todo
+      dependente — só titular pode ter cartão).
+    - `disp_id` não é mantida no resultado: era só o artefato de join
+      entre client e account, redundante agora que `account_id` é uma
+      coluna direta de `client`.
+
+    Args:
+        client_df: DataFrame tratado da tabela `client`.
+        disp_df: DataFrame tratado da tabela `disp`.
+        card_df: DataFrame tratado da tabela `card`.
+
+    Returns:
+        DataFrame `client` consolidado, pronto para `silver/real/`.
+    """
+    disp_renamed = disp_df.rename(columns={"type": "relationship_type"})
+    merged = client_df.merge(
+        disp_renamed[["disp_id", "client_id", "account_id", "relationship_type"]],
+        on="client_id",
+        how="left",
+        validate="one_to_one",
+    )
+
+    card_renamed = card_df.rename(columns={"type": "card_type", "issued": "card_issued"})
+    merged = merged.merge(
+        card_renamed[["disp_id", "card_id", "card_type", "card_issued"]],
+        on="disp_id",
+        how="left",
+        validate="one_to_one",
+    )
+
+    merged = merged.drop(columns=["disp_id"])
+    return merged[
+        [
+            "client_id",
+            "account_id",
+            "relationship_type",
+            "district_id",
+            "gender",
+            "birth_date",
+            "card_id",
+            "card_type",
+            "card_issued",
+        ]
+    ]
+
+
+def build_account_table(account_df: pd.DataFrame, loan_df: pd.DataFrame) -> pd.DataFrame:
+    """Consolida `loan` dentro de `account` (merge 1:1, no máximo 1 loan/conta).
+
+    As colunas de `loan` recebem o prefixo `loan_` (inclusive `date` ->
+    `loan_date`) para não colidir com as colunas já existentes em
+    `account` (em especial `date`, a data de abertura da conta). Contas
+    sem empréstimo (a maioria: 3818 das 4500) ficam com essas colunas
+    nulas.
+
+    Args:
+        account_df: DataFrame tratado da tabela `account`.
+        loan_df: DataFrame tratado da tabela `loan`.
+
+    Returns:
+        DataFrame `account` consolidado, pronto para `silver/real/`.
+    """
+    loan_renamed = loan_df.rename(
+        columns={
+            "date": "loan_date",
+            "amount": "loan_amount",
+            "duration": "loan_duration",
+            "payments": "loan_payments",
+            "status": "loan_status",
+        }
+    )
+    merged = account_df.merge(loan_renamed, on="account_id", how="left", validate="one_to_one")
+    return merged[
+        [
+            "account_id",
+            "district_id",
+            "frequency",
+            "date",
+            "loan_id",
+            "loan_date",
+            "loan_amount",
+            "loan_duration",
+            "loan_payments",
+            "loan_status",
+        ]
+    ]
+
+
+# --------------------------------------------------------------------------
 # Orquestração geral
 # --------------------------------------------------------------------------
-def run(bronze_dir: Path = BRONZE_DIR, silver_dir: Path = SILVER_REAL_DIR) -> None:
-    """Executa o pipeline completo Bronze -> Silver/real para todas as tabelas.
+# Tabelas de origem consumidas pela consolidação (build_client_table /
+# build_account_table) além de si mesmas: sem todas elas presentes na
+# Bronze, a reorganização não pode ser feita.
+REQUIRED_SOURCE_TABLES = {"account", "card", "client", "disp", "district", "loan", "order", "trans"}
 
-    Cada tabela é processada de forma independente: uma falha em uma
-    tabela é registrada no log, mas não interrompe o processamento das
-    demais. Ao final, se houver qualquer falha, uma exceção é levantada
-    para sinalizar o erro ao chamador (código de saída != 0).
+# Nomes de tabela da Silver/real anteriores à reorganização (disp/card/loan
+# viram colunas de client/account) — removidos caso sobrem de uma execução
+# anterior, para não deixar a pasta com um schema misto/obsoleto.
+STALE_SILVER_TABLES = {"disp", "card", "loan"}
+
+
+def run(bronze_dir: Path = BRONZE_DIR, silver_dir: Path = SILVER_REAL_DIR) -> None:
+    """Executa o pipeline completo Bronze -> Silver/real, já reorganizado.
+
+    Duas fases:
+      1. Cada uma das 8 tabelas da Bronze é lida e tratada de forma
+         independente (`process_table`) — uma falha aqui é registrada no
+         log, mas não interrompe o processamento das demais.
+      2. Se as 8 tabelas foram tratadas com sucesso, são consolidadas em
+         5 (`district`, `client`, `account`, `order`, `trans` — ver
+         `build_client_table`/`build_account_table`) e gravadas em
+         `silver_dir`. Arquivos de uma execução anterior ao schema
+         reorganizado (`disp.parquet`/`card.parquet`/`loan.parquet`) são
+         removidos.
 
     Args:
         bronze_dir: diretório de origem (datalake/bronze/).
         silver_dir: diretório de destino (datalake/silver/real/).
 
     Raises:
-        RuntimeError: se uma ou mais tabelas falharem no tratamento.
+        RuntimeError: se uma ou mais tabelas falharem no tratamento, ou se
+            alguma tabela exigida pela consolidação estiver ausente.
     """
     silver_dir.mkdir(parents=True, exist_ok=True)
 
     parquet_files = find_parquet_files(bronze_dir)
 
-    succeeded: list[Path] = []
+    processed: dict[str, pd.DataFrame] = {}
     failed: list[tuple[Path, Exception]] = []
 
     logger.info("Iniciando tratamento Bronze -> Silver/real (%d tabela(s))...", len(parquet_files))
@@ -632,23 +803,47 @@ def run(bronze_dir: Path = BRONZE_DIR, silver_dir: Path = SILVER_REAL_DIR) -> No
         table_name = parquet_path.stem
         try:
             df = pd.read_parquet(parquet_path)
-            df = process_table(df, table_name)
-
-            out_path = silver_dir / f"{table_name}.parquet"
-            df.to_parquet(out_path, engine="pyarrow", index=False)
-            logger.info("  -> gravado em: %s", out_path)
-            succeeded.append(out_path)
+            processed[table_name] = process_table(df, table_name)
         except Exception as exc:  # noqa: BLE001 - captura ampla e intencional: isola falhas por tabela
             logger.exception("Falha ao processar a tabela '%s'.", table_name)
             failed.append((parquet_path, exc))
 
-    logger.info("Tratamento finalizado: %d sucesso(s), %d falha(s).", len(succeeded), len(failed))
+    logger.info(
+        "Tratamento por tabela finalizado: %d sucesso(s), %d falha(s).", len(processed), len(failed)
+    )
 
     if failed:
         nomes = ", ".join(p.stem for p, _ in failed)
         raise RuntimeError(f"Falha ao tratar {len(failed)} tabela(s): {nomes}")
 
-    logger.info("Camada Silver/real atualizada com sucesso em: %s", silver_dir)
+    faltantes = REQUIRED_SOURCE_TABLES - processed.keys()
+    if faltantes:
+        raise RuntimeError(
+            f"Tabela(s) exigida(s) pela consolidação ausente(s) na Bronze: {sorted(faltantes)}."
+        )
+
+    logger.info("Consolidando: disp+card -> client, loan -> account, district renomeada...")
+    final_tables: dict[str, pd.DataFrame] = {
+        "district": rename_district_columns(processed["district"]),
+        "client": build_client_table(processed["client"], processed["disp"], processed["card"]),
+        "account": build_account_table(processed["account"], processed["loan"]),
+        "order": processed["order"],
+        "trans": processed["trans"],
+    }
+
+    for stale_name in STALE_SILVER_TABLES:
+        stale_path = silver_dir / f"{stale_name}.parquet"
+        if stale_path.exists():
+            stale_path.unlink()
+            logger.info("  - removido arquivo obsoleto (pré-reorganização): %s", stale_path)
+
+    for table_name, df in final_tables.items():
+        out_path = silver_dir / f"{table_name}.parquet"
+        df.to_parquet(out_path, engine="pyarrow", index=False)
+        n_rows, n_cols = df.shape
+        logger.info("  -> gravado: %s (%d linhas, %d colunas)", out_path, n_rows, n_cols)
+
+    logger.info("Camada Silver/real (reorganizada, 5 tabelas) atualizada com sucesso em: %s", silver_dir)
 
 
 def parse_args() -> argparse.Namespace:

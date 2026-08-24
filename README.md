@@ -130,7 +130,12 @@ Temos disponíveis oito tabelas, cada uma delas com o seguinte _schema_ de dados
    - bank: Código do banco parceiro, composto por duas letras (aplicável apenas a transferências);
    - account: Chave de identificação da conta parceira (aplicável apenas a transferências);
 
-### Diagrama Entidade-Relacionamento
+### Diagrama Entidade-Relacionamento (dataset de origem)
+
+O diagrama abaixo descreve o schema original do Berka Dataset (8 tabelas),
+tal como chega na camada Raw/Bronze. A camada Silver/real reorganiza esse
+schema — ver [Reorganização na Silver/real](#reorganização-na-silverreal)
+mais abaixo.
 
 ```mermaid
 erDiagram
@@ -215,10 +220,159 @@ erDiagram
     }
 ```
 
+### Reorganização na Silver/real
+
+O schema de origem tem 8 tabelas e uma hierarquia de 4 níveis
+(`district → account/client → disp → card/loan/order/trans`). Para
+simplificar os relacionamentos — em preparação para a etapa de dados
+sintéticos, que precisa de um schema mais raso para o `HMASynthesizer`
+(SDV) conseguir modelar as tabelas com robustez — a Silver/real consolida
+`disp` + `card` dentro de `client`, e `loan` dentro de `account`.
+`district` permanece como tabela dimensão separada (só as colunas
+A1..A16 foram renomeadas), pois um join simples já resolve a relação sem
+introduzir ambiguidade.
+
+Os três merges usados na consolidação são **1:1, sem perda de dado** —
+validado contra os dados reais antes da implementação:
+- todo `client` tem exatamente 1 `disp` (nenhum cliente em mais de uma
+  conta, nenhuma conta com mais de 1 titular ou mais de 1 dependente, e
+  nunca o mesmo `client_id` como titular e dependente da mesma conta);
+- todo `card` pertence a um `disp` do tipo `TITULAR` único (nenhum
+  dependente tem cartão, nenhum titular tem mais de 1 cartão);
+- toda `account` tem no máximo 1 `loan`.
+
+O resultado é 5 tabelas em vez de 8, com apenas 3 relacionamentos em vez
+de 7:
+
+```mermaid
+erDiagram
+    DISTRICT ||--o{ ACCOUNT : "possui"
+    DISTRICT ||--o{ CLIENT : "reside em"
+    ACCOUNT ||--o{ CLIENT : "vinculada a"
+    ACCOUNT ||--o{ ORDER : "emite"
+    ACCOUNT ||--o{ TRANS : "registra"
+
+    DISTRICT {
+        string district_id PK
+        string district_name
+        string region
+        int population
+        int municipalities_under_499
+        int municipalities_500_1999
+        int municipalities_2000_9999
+        int municipalities_over_10000
+        int cities
+        float urban_population_ratio
+        int average_salary
+        float unemployment_rate_1995
+        float unemployment_rate_1996
+        int entrepreneurs_per_1000
+        int crimes_1995
+        int crimes_1996
+    }
+    CLIENT {
+        string client_id PK
+        string account_id FK
+        string relationship_type
+        string district_id FK
+        string gender
+        date birth_date
+        string card_id
+        string card_type
+        date card_issued
+    }
+    ACCOUNT {
+        string account_id PK
+        string district_id FK
+        string frequency
+        date date
+        string loan_id
+        date loan_date
+        int loan_amount
+        int loan_duration
+        float loan_payments
+        string loan_status
+    }
+    ORDER {
+        string order_id PK
+        string account_id FK
+        string bank_to
+        string account_to
+        float amount
+        string k_symbol
+    }
+    TRANS {
+        string trans_id PK
+        string account_id FK
+        date date
+        string type
+        string operation
+        float amount
+        float balance
+        string k_symbol
+        string bank
+        string account
+    }
+```
+
+- _district_ (77 registros) — colunas A1..A16 renomeadas, dados inalterados:
+   - district_id (era A1), district_name (A2), region (A3), population (A4),
+     municipalities_under_499 (A5), municipalities_500_1999 (A6),
+     municipalities_2000_9999 (A7), municipalities_over_10000 (A8),
+     cities (A9), urban_population_ratio (A10), average_salary (A11),
+     unemployment_rate_1995 (A12), unemployment_rate_1996 (A13),
+     entrepreneurs_per_1000 (A14), crimes_1995 (A15), crimes_1996 (A16);
+- _client_ (5369 registros; consolida _client_ + _disp_ + _card_):
+   - client_id: Chave de identificação do cliente;
+   - account_id: Chave de identificação da conta (todo cliente pertence a exatamente 1 conta);
+   - relationship_type: Papel do cliente na conta
+   ```
+   {
+      "TITULAR": "Proprietário — único que pode emitir ordens ou contrair empréstimos",
+      "DEPENDENTE": "Dependente"
+   }
+   ```
+   - district_id: Chave de identificação do distrito de residência;
+   - gender: Sexo do cliente ('M'/'F'), derivado de `birth_number`;
+   - birth_date: Data de nascimento, derivada de `birth_number`;
+   - card_id: Chave de identificação do cartão (nulo para os 4477 clientes sem cartão — só titular pode ter);
+   - card_type: Tipo de cartão (nulo se sem cartão)
+   ```
+      'junior', 'classic' e 'gold'
+   ```
+   - card_issued: Data de emissão do cartão (nulo se sem cartão);
+- _account_ (4500 registros; consolida _account_ + _loan_):
+   - account_id: Chave de identificação da conta;
+   - district_id: Chave de identificação do distrito da conta;
+   - frequency: Frequência de emissão do extrato
+   ```
+   {
+      "POPLATEK MESICNE": "Mensal",
+      "POPLATEK TYDNE": "Semanal",
+      "POPLATEK PO OBRATU": "Por transação"
+   }
+   ```
+   - date: Data de criação da conta;
+   - loan_id: Chave de identificação do empréstimo (nulo para as 3818 contas sem empréstimo);
+   - loan_date: Data de concessão do empréstimo (nulo se sem empréstimo);
+   - loan_amount: Valor do empréstimo (nulo se sem empréstimo);
+   - loan_duration: Duração do empréstimo em meses (nulo se sem empréstimo);
+   - loan_payments: Valor do pagamento mensal (nulo se sem empréstimo);
+   - loan_status: Situação de pagamento do empréstimo (nulo se sem empréstimo)
+   ```
+   {
+      "A": "Contrato encerrado, sem dívidas",
+      "B": "Contrato encerrado, empréstimo não pago",
+      "C": "Contrato em vigor, em dia",
+      "D": "Contrato em vigor, cliente em débito"
+   }
+   ```
+- _order_ e _trans_: inalteradas (ver schema de origem acima).
+
 Para este projeto foi provisionado um datalake baseado na arquitetura Medallion, hospedado numa infraestrutura local. 
 - Camada raw: contém os arquivos brutos no formato `.csv` do [The Berka Dataset](https://www.kaggle.com/datasets/marceloventura/the-berka-dataset). 
 - Camada bronze: Cópia fiel dos arquivos originais, no formato `.parquet`.
-- Camada silver: `real`, dados originais do conjunto devidamente tratados. O tratamento inclui a tipagem correta de cada coluna, o preenchimento dos valores nulos, datas parseadas e valores categóricos traduzidos para português.
+- Camada silver: `real`, dados originais do conjunto devidamente tratados e reorganizados (ver [Reorganização na Silver/real](#reorganização-na-silverreal)). O tratamento inclui a tipagem correta de cada coluna, o preenchimento dos valores nulos, datas parseadas e valores categóricos traduzidos para português.
 
 ### Estrutura gerada
 
@@ -306,8 +460,17 @@ python src/scripts/bronze_to_silver.py
    (`OWNER` -> `TITULAR`), `trans.type` (`PRIJEM` -> `CREDITO`),
    `trans.operation`, `trans.k_symbol`/`order.k_symbol` e `loan.status`
    (códigos A-D adaptados para rótulos descritivos, ex. `ATIVO ADIMPLENTE`).
-6. Grava o resultado em `datalake/silver/real/`, com logs detalhados por
-   tabela (classificação de colunas, nulos preenchidos e valores
+6. Com as 8 tabelas tratadas, consolida o schema (ver
+   [Reorganização na Silver/real](#reorganização-na-silverreal)):
+   `disp` + `card` -> `client`; `loan` -> `account` (merges 1:1, via
+   `pd.merge(..., validate="one_to_one")` — o próprio pandas barra a
+   gravação caso a premissa de cardinalidade deixe de valer no futuro);
+   `district` só tem as colunas A1..A16 renomeadas.
+7. Grava o resultado em `datalake/silver/real/` (5 tabelas: `district`,
+   `client`, `account`, `order`, `trans`), removendo arquivos de uma
+   execução anterior ao schema reorganizado
+   (`disp.parquet`/`card.parquet`/`loan.parquet`), com logs detalhados
+   por tabela (classificação de colunas, nulos preenchidos e valores
    traduzidos).
 
 Todo o progresso é registrado via `logging` (nível INFO).
