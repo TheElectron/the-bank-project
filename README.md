@@ -133,8 +133,8 @@ Temos disponíveis oito tabelas, cada uma delas com o seguinte _schema_ de dados
 ### Diagrama Entidade-Relacionamento (dataset de origem)
 
 O diagrama abaixo descreve o schema original do Berka Dataset (8 tabelas),
-tal como chega na camada Raw/Bronze. A camada Silver/real reorganiza esse
-schema — ver [Reorganização na Silver/real](#reorganização-na-silverreal)
+tal como chega na camada Raw/Bronze. A camada Silver reorganiza esse
+schema — ver [Reorganização na Silver](#reorganização-na-silver)
 mais abaixo.
 
 ```mermaid
@@ -220,14 +220,13 @@ erDiagram
     }
 ```
 
-### Reorganização na Silver/real
+### Reorganização na Silver
 
 O schema de origem tem 8 tabelas e uma hierarquia de 4 níveis
 (`district → account/client → disp → card/loan/order/trans`). Para
-simplificar os relacionamentos — em preparação para a etapa de dados
-sintéticos, que precisa de um schema mais raso para o `HMASynthesizer`
-(SDV) conseguir modelar as tabelas com robustez — a Silver/real consolida
-`disp` + `card` dentro de `client`, e `loan` dentro de `account`.
+simplificar os relacionamentos e reduzir os joins necessários nas etapas
+seguintes (modelagem) — a Silver consolida `disp` + `card` dentro de
+`client`, e `loan` dentro de `account`.
 `district` permanece como tabela dimensão separada (só as colunas
 A1..A16 foram renomeadas), pois um join simples já resolve a relação sem
 introduzir ambiguidade.
@@ -369,10 +368,123 @@ erDiagram
    ```
 - _order_ e _trans_: inalteradas (ver schema de origem acima).
 
+### Modelagem da Gold
+
+Objetivo final do projeto: treinar modelos de ML. Entre 3 propostas de
+modelagem avaliadas para a camada Gold — (1) risco de crédito
+(classificação de inadimplência de empréstimo, grão=loan), (2) previsão
+de fluxo de caixa mensal por conta (regressão, grão=conta×mês), (3)
+segmentação comportamental de clientes (não supervisionado) — foi
+escolhida a **Proposta 2**.
+
+**Grão:** 1 linha por `account_id` × `ano_mes` (chave composta).
+**Target:** `target_soma_entradas_proximo_mes` — soma das entradas
+(`trans.type == 'CREDITO'`) do mês seguinte, dentro da mesma conta.
+
+A tabela combina as 5 tabelas da Silver: agregados mensais de
+`trans` (o núcleo comportamental), atributos de `account` (idade da
+conta, frequência, termos do empréstimo), `client` (idade/sexo do
+titular, presença de dependente), `district` (contexto socioeconômico,
+denormalizado via `account.district_id`) e `order` (soma das ordens
+permanentes da conta). Ver `gold_features.py` mais abaixo para o schema
+completo, coluna a coluna.
+
+**Duas decisões deliberadas para evitar vazamento de informação do
+futuro:**
+- `loan_status` (desfecho final do empréstimo) **não é usada como
+  feature** — é determinada possivelmente depois do mês sendo modelado;
+  usá-la em todas as linhas do empréstimo vazaria o resultado final para
+  trás na série. Em vez disso, cada linha carrega só `loan_ativo_no_mes`
+  (o empréstimo já existia e ainda não tinha terminado naquele mês — um
+  fato conhecido na época) e `loan_payments` (valor fixo do pagamento,
+  conhecido desde a concessão). Mesma lógica para `card_ativo_no_mes`.
+- Os dados sintéticos (etapa removida do projeto — ver histórico) não
+  entram na Gold: a tentativa de sintetizar `trans` via bootstrap de
+  linha real + jitter não agrega informação genuinamente nova (é a
+  mesma observação real, perturbada) e introduz risco de vazamento entre
+  treino e teste por quase-duplicação. A Gold é construída só com dados
+  reais.
+
+**Preenchimento de gaps mensais:** cada conta é reindexada para um
+calendário contínuo entre o primeiro e o último mês com qualquer
+transação (não só as de crédito). Meses sem transação viram
+`soma_entradas_mes_atual`/`soma_saidas_mes_atual`/`n_transacoes_mes = 0`;
+`saldo_fim_mes` é propagado do último mês observado. Sem isso, a janela
+móvel e o `shift` do target operariam sobre *linhas* em vez de meses de
+calendário.
+
+**Resultado real:** 185.326 linhas conta-mês na janela completa (269
+delas preenchidas por gap-fill) → **171.826 linhas finais**, após remover
+as bordas de cada conta (início: sem janela móvel completa; fim: sem mês
+seguinte para o target).
+
+### Pipeline de treinamento do modelo
+
+Três propostas de pipeline foram avaliadas: **(A)** regressão linear
+regularizada (Ridge) com holdout temporal simples; **(B)** gradient
+boosting (XGBoost) com validação walk-forward; **(C)** modelagem
+sequencial por conta (ex.: GRU/LSTM sobre a série mensal de cada conta).
+**Escolhida: Proposta B**, com a Proposta A treinada em paralelo como
+baseline de comparação (nunca reportar um modelo mais complexo sem uma
+baseline simples provando que ele agrega valor). A Proposta C foi
+descartada: contas têm histórico curto (mediana bem abaixo do máximo de
+69 meses), exigiria uma dependência pesada nunca usada no projeto
+(`torch`/`tensorflow`), e contornaria o trabalho de engenharia de
+features já feito na Gold.
+
+**Validação — sempre walk-forward, nunca split aleatório de linhas:** o
+problema é forecasting em painel (várias contas, cada uma com sua própria
+série mensal) — um split aleatório vazaria informação entre meses
+vizinhos da mesma conta. `train_model.py` usa:
+- **4 folds walk-forward** (janela expansiva): a cada fold, o treino é
+  tudo até um corte de data e a validação são os 3 meses seguintes — a
+  janela de treino só cresce, nunca usa dado do futuro.
+- **1 holdout final**: os últimos 3 meses da base (1998-09 a 1998-11),
+  nunca tocados até a avaliação final — simula a implantação real.
+
+**Transformação:** o target e as features monetárias (fortemente
+assimétricas — ver `notebooks/eda_silver.ipynb`) recebem `signed_log1p`
+(`sign(x) * log1p(|x|)` — generaliza `log1p` para aceitar `saldo_fim_mes`
+negativo) antes do treino; as métricas são sempre revertidas para a
+escala original (moeda) antes de calcular MAE/RMSE/R². `district_id` não
+entra como feature — é um identificador de alta cardinalidade cuja
+informação já está denormalizada nas colunas socioeconômicas da Gold.
+
+**Resultado (holdout final, 1998-09 a 1998-11):**
+
+| Modelo | MAE | RMSE | R² |
+|---|---|---|---|
+| Ridge (baseline) | 7.563 | 17.295 | 0,289 |
+| **XGBoost** | **6.057** | 17.595 | 0,265 |
+
+O XGBoost erra ~20% menos em média (MAE) que o Ridge — confirma que a
+Proposta B agrega valor sobre o baseline linear. Mas é um resultado misto,
+não uma vitória limpa: o Ridge tem RMSE e R² levemente melhores, ou seja,
+o XGBoost acerta melhor o caso típico mas comete alguns erros grandes que
+penalizam mais o RMSE (que pune erro ao quadrado) do que o MAE. R² em
+torno de 0,25-0,29 nos dois modelos indica que boa parte da variação nas
+entradas do mês seguinte não é explicada pelas features atuais — esperado
+para fluxo de caixa pessoal (inerentemente ruidoso), mas deixa espaço
+real para iteração futura (ajuste de hiperparâmetros, mais features).
+`soma_entradas_mes_atual`, `media_entradas_ultimos_3_meses` e
+`n_transacoes_mes` são as features mais importantes no XGBoost.
+
+**Versionamento e gestão de artefatos — MLflow:** cada execução de
+`train_model.py` registra tudo no MLflow (tracking store local em
+SQLite, sem servidor — ver seção do script mais abaixo): uma run pai
+(`train_model`, parâmetros gerais + resumo do walk-forward) com runs
+filhas aninhadas por fold e uma `holdout_final`, onde os 2 modelos finais
+são logados **e registrados** no Model Registry
+(`inflow-forecast-ridge`, `inflow-forecast-xgboost`) — cada execução cria
+uma nova versão, nada é sobrescrito, e cada versão carrega a métrica de
+holdout na própria descrição. Para explorar:
+`mlflow ui --backend-store-uri sqlite:///datalake/gold/models/mlflow.db`.
+
 Para este projeto foi provisionado um datalake baseado na arquitetura Medallion, hospedado numa infraestrutura local. 
 - Camada raw: contém os arquivos brutos no formato `.csv` do [The Berka Dataset](https://www.kaggle.com/datasets/marceloventura/the-berka-dataset). 
 - Camada bronze: Cópia fiel dos arquivos originais, no formato `.parquet`.
-- Camada silver: `real`, dados originais do conjunto devidamente tratados e reorganizados (ver [Reorganização na Silver/real](#reorganização-na-silverreal)). O tratamento inclui a tipagem correta de cada coluna, o preenchimento dos valores nulos, datas parseadas e valores categóricos traduzidos para português.
+- Camada silver: dados originais do conjunto devidamente tratados e reorganizados (ver [Reorganização na Silver](#reorganização-na-silver)). O tratamento inclui a tipagem correta de cada coluna, o preenchimento dos valores nulos, datas parseadas e valores categóricos traduzidos para português.
+- Camada gold: `account_monthly_features`, feature store pronta para ML (ver [Modelagem da Gold](#modelagem-da-gold)).
 
 ### Estrutura gerada
 
@@ -380,8 +492,20 @@ Para este projeto foi provisionado um datalake baseado na arquitetura Medallion,
 datalake/
 ├── raw/                  # arquivos brutos, sem alterações
 ├── bronze/               # arquivos da camada raw no formato .parquet.
-└── silver/
-    └── real/              # dados devidamente tipados, nulos tratados, datas parseadas.
+├── silver/                # dados devidamente tipados, nulos tratados, datas parseadas.
+└── gold/
+    ├── account_monthly_features.parquet   # feature store (grão: conta x mês).
+    └── models/
+        ├── mlflow.db                             # tracking store do MLflow (SQLite).
+        ├── mlruns/                                # artefatos do MLflow (modelos versionados, por run).
+        ├── cv_metrics_walk_forward.csv           # métricas por fold (média +/- desvio-padrão).
+        ├── holdout_metrics.csv                   # métricas no holdout final.
+        └── xgboost_feature_importances.csv       # importância nativa das features.
+```
+
+```
+notebooks/
+└── eda_silver.ipynb        # EDA da Silver (todas as 5 tabelas).
 ```
 
 ### Datalake Setup
@@ -409,11 +533,20 @@ python src/scripts/datalake_setup.py
 # 5. Ingestão e processamento I (raw -> bronze)
 python src/scripts/raw_to_bronze.py
 
-# 6. Ingestão e processamento II (bronze -> silver/real)
+# 6. Ingestão e processamento II (bronze -> silver)
 python src/scripts/bronze_to_silver.py
+
+# 7. Feature store para ML (silver -> gold)
+python src/scripts/gold_features.py
+
+# 8. Treino e validação do modelo (gold -> gold/models)
+python src/scripts/train_model.py
 ```
 
 ## O que os scripts fazem
+
+Padrão de código e documentação (docstrings, comentários, o que vive em
+`_common.py` vs. em cada script) documentado em [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### `datalake_setup.py` (Raw)
 
@@ -437,7 +570,7 @@ python src/scripts/bronze_to_silver.py
 4. Registra no log o número de linhas e colunas de cada arquivo
    convertido; falhas em um arquivo não interrompem os demais.
 
-### `bronze_to_silver.py` (Silver/real)
+### `bronze_to_silver.py` (Silver)
 
 1. Lê cada `.parquet` da Bronze (tudo `string`) e normaliza `""`, `" "` e
    `'?'` (marcador de nulo usado em `district.A12`/`A15`) para `NaN`.
@@ -461,12 +594,12 @@ python src/scripts/bronze_to_silver.py
    `trans.operation`, `trans.k_symbol`/`order.k_symbol` e `loan.status`
    (códigos A-D adaptados para rótulos descritivos, ex. `ATIVO ADIMPLENTE`).
 6. Com as 8 tabelas tratadas, consolida o schema (ver
-   [Reorganização na Silver/real](#reorganização-na-silverreal)):
+   [Reorganização na Silver](#reorganização-na-silver)):
    `disp` + `card` -> `client`; `loan` -> `account` (merges 1:1, via
    `pd.merge(..., validate="one_to_one")` — o próprio pandas barra a
    gravação caso a premissa de cardinalidade deixe de valer no futuro);
    `district` só tem as colunas A1..A16 renomeadas.
-7. Grava o resultado em `datalake/silver/real/` (5 tabelas: `district`,
+7. Grava o resultado em `datalake/silver/` (5 tabelas: `district`,
    `client`, `account`, `order`, `trans`), removendo arquivos de uma
    execução anterior ao schema reorganizado
    (`disp.parquet`/`card.parquet`/`loan.parquet`), com logs detalhados
@@ -474,3 +607,89 @@ python src/scripts/bronze_to_silver.py
    traduzidos).
 
 Todo o progresso é registrado via `logging` (nível INFO).
+
+### `gold_features.py` (Gold)
+
+Ver [Modelagem da Gold](#modelagem-da-gold) para o racional completo do
+grão, do target e das decisões de design (por que `loan_status` não é
+usada, por que os dados sintéticos ficam de fora).
+
+1. Lê as 5 tabelas da Silver.
+2. Monta as features estáticas por conta: `district` denormalizada (via
+   `account.district_id`), sexo/idade do titular, presença de
+   dependente, soma das ordens permanentes da conta.
+3. Agrega `trans` por conta e mês: soma de entradas (`type == 'CREDITO'`)
+   e saídas (`type` em `{DEBITO, SAQUE}`), saldo do fim do mês (última
+   transação), nº de transações.
+4. Preenche os gaps mensais: reindexa cada conta para um calendário
+   contínuo entre o primeiro e o último mês com qualquer transação
+   (entradas/saídas/contagem viram 0; saldo é propagado do último mês
+   observado).
+5. Junta as features estáticas e deriva as dependentes do mês: idade da
+   conta, idade do titular, `loan_ativo_no_mes`/`loan_payments` e
+   `card_ativo_no_mes` (só presença, nunca o desfecho final — evita
+   vazamento), mês do ano.
+6. Calcula as features de janela móvel de 3 meses
+   (`media_entradas_ultimos_3_meses`, `desvio_padrao_entradas_ultimos_3_meses`,
+   `media_saidas_ultimos_3_meses`) e o target
+   (`target_soma_entradas_proximo_mes`, `shift(-1)` dentro do grupo da
+   conta).
+7. Remove as linhas de borda (sem janela completa ou sem mês seguinte) e
+   grava `datalake/gold/account_monthly_features.parquet`, com chave
+   composta `account_id` + `ano_mes`.
+
+Todo o progresso é registrado via `logging` (nível INFO).
+
+### `train_model.py` (Gold -> Gold/models)
+
+Ver [Pipeline de treinamento do modelo](#pipeline-de-treinamento-do-modelo)
+para o racional completo (as 3 propostas avaliadas, a escolha, e os
+resultados).
+
+1. Aponta o MLflow para o tracking store local (SQLite,
+   `datalake/gold/models/mlflow.db`; artefatos em
+   `datalake/gold/models/mlruns/`) e abre a run pai `train_model`.
+2. Lê a Gold e adiciona `mes_sin`/`mes_cos` (codificação cíclica do mês,
+   usada só pelo Ridge).
+3. Monta os 4 folds de validação walk-forward (janela expansiva, 3 meses
+   de validação cada) mais o holdout final (últimos 3 meses).
+4. Em cada fold (run filha `fold_N`, aninhada): treina `Ridge` (pipeline
+   com imputação, `signed_log1p` nas colunas monetárias, escala e
+   one-hot) e `XGBoost` (colunas categóricas como código inteiro fixo —
+   não dtype `category` nativo, que não sobrevive ao round-trip JSON de
+   serving do MLflow; sem imputação — `NaN` de `loan_payments` é nativo)
+   no treino do fold; avalia (MAE/RMSE/R², sempre na escala original) na
+   validação do fold; loga parâmetros e métricas de ambos os modelos na
+   run do fold.
+5. Loga na run pai o resumo agregado (média/desvio-padrão entre os 4
+   folds) e o CSV `cv_metrics_walk_forward.csv` como artefato.
+6. Repete o treino+avaliação uma última vez no holdout final (run filha
+   `holdout_final`: treino = todo o pool de CV; validação = os últimos 3
+   meses, nunca vistos até aqui) — loga métricas, `holdout_metrics.csv` e
+   `xgboost_feature_importances.csv` como artefatos.
+7. **Loga e registra** os 2 modelos finais no Model Registry
+   (`inflow-forecast-ridge`, `inflow-forecast-xgboost`, com assinatura de
+   entrada/saída inferida do exemplo) — cada execução cria uma nova
+   versão; a descrição de cada versão registrada carrega as métricas de
+   holdout daquela execução.
+
+Todo o progresso é registrado via `logging` (nível INFO).
+
+## Notebook de EDA
+
+`notebooks/eda_silver.ipynb` cobre as 5 tabelas da Silver em profundidade,
+com a mesma estrutura para cada uma: (1) dicionário de dados, (2) volume/
+tipo/formato, (3) indicadores e chaves primárias/estrangeiras, (4) nulos,
+duplicatas e valores fora do padrão (outliers por IQR, taxa do marcador
+`'DESCONHECIDO'`), (5) gráficos (seaborn — dispersão, histograma, barra,
+boxplot, heatmap de correlação, série temporal), e (6) insights voltados
+para a modelagem da Gold. Os gráficos usam uma paleta categórica fixa (8
+cores, nunca redistribuída por rank) e rampas sequencial/divergente de um
+único matiz cada, para leitura consistente entre os gráficos. Para rodar:
+
+```bash
+source .venv/bin/activate
+jupyter nbconvert --to notebook --execute --inplace notebooks/eda_silver.ipynb
+# ou abrir interativamente:
+jupyter lab notebooks/eda_silver.ipynb
+```

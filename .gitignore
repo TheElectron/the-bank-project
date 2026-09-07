@@ -2,6 +2,8 @@
 __pycache__/
 *.pyc
 datalake/
+ROADMAP.md
+CONTRIBUTING.md
 .ipynb_checkpoints/
 
 # Credenciais da Kaggle API (token) — nunca versionar.
