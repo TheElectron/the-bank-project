@@ -1,6 +1,7 @@
 .venv/
 __pycache__/
 *.pyc
+.pytest_cache/
 datalake/
 ROADMAP.md
 CONTRIBUTING.md
@@ -8,6 +9,14 @@ CONTRIBUTING.md
 
 # Credenciais da Kaggle API (token) — nunca versionar.
 kaggle/
+
+# Segredos locais (Kaggle, MLFLOW_TRACKING_URI etc.) — nunca versionar.
+# .env.example (o template) continua rastreado.
+.env
+
+# Caches de tooling (mypy/ruff)
+.mypy_cache/
+.ruff_cache/
 
 # Estado de sessão local do Claude Code (não é configuração do projeto).
 .claude/
