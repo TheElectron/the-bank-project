@@ -7,6 +7,7 @@ O projeto está baseado em 3 etapas.
 
 ## Dados
 
+### Camada Bronze
 O ponto de partida deste projeto é o [The Berka Dataset](https://www.kaggle.com/datasets/marceloventura/the-berka-dataset), este conjunto de dados reune informações financeiras de um banco tcheco para o ano de 1999.\
 Temos disponíveis oito tabelas, cada uma delas com o seguinte _schema_ de dados:
 
@@ -130,8 +131,7 @@ Temos disponíveis oito tabelas, cada uma delas com o seguinte _schema_ de dados
    - bank: Código do banco parceiro, composto por duas letras (aplicável apenas a transferências);
    - account: Chave de identificação da conta parceira (aplicável apenas a transferências);
 
-### Diagrama Entidade-Relacionamento (dataset de origem)
-
+#### Diagrama Entidade-Relacionamento (conjunto original)
 O diagrama abaixo descreve o schema original do Berka Dataset (8 tabelas),
 tal como chega na camada Raw/Bronze. A camada Silver reorganiza esse
 schema — ver [Reorganização na Silver](#reorganização-na-silver)
@@ -220,7 +220,7 @@ erDiagram
     }
 ```
 
-### Reorganização na Silver
+### Camada Silver
 
 O schema de origem tem 8 tabelas e uma hierarquia de 4 níveis
 (`district → account/client → disp → card/loan/order/trans`). Para
@@ -240,8 +240,62 @@ validado contra os dados reais antes da implementação:
   dependente tem cartão, nenhum titular tem mais de 1 cartão);
 - toda `account` tem no máximo 1 `loan`.
 
-O resultado é 5 tabelas em vez de 8, com apenas 3 relacionamentos em vez
-de 7:
+Como resultado, temos:
+- _district_ (77 registros) — colunas A1..A16 renomeadas, dados inalterados:
+   - district_id (era A1), district_name (A2), region (A3), population (A4),
+     municipalities_under_499 (A5), municipalities_500_1999 (A6),
+     municipalities_2000_9999 (A7), municipalities_over_10000 (A8),
+     cities (A9), urban_population_ratio (A10), average_salary (A11),
+     unemployment_rate_1995 (A12), unemployment_rate_1996 (A13),
+     entrepreneurs_per_1000 (A14), crimes_1995 (A15), crimes_1996 (A16);
+- _client_ (5369 registros; consolida _client_ + _disp_ + _card_):
+   - client_id: Chave de identificação do cliente;
+   - account_id: Chave de identificação da conta (todo cliente pertence a exatamente 1 conta);
+   - relationship_type: Papel do cliente na conta
+   ```
+   {
+      "TITULAR": "Proprietário — único que pode emitir ordens ou contrair empréstimos",
+      "DEPENDENTE": "Dependente"
+   }
+   ```
+   - district_id: Chave de identificação do distrito de residência;
+   - gender: Sexo do cliente ('M'/'F'), derivado de `birth_number`;
+   - birth_date: Data de nascimento, derivada de `birth_number`;
+   - card_id: Chave de identificação do cartão (nulo para os 4477 clientes sem cartão — só titular pode ter);
+   - card_type: Tipo de cartão (nulo se sem cartão)
+   ```
+      'junior', 'classic' e 'gold'
+   ```
+   - card_issued: Data de emissão do cartão (nulo se sem cartão);
+- _account_ (4500 registros; consolida _account_ + _loan_):
+   - account_id: Chave de identificação da conta;
+   - district_id: Chave de identificação do distrito da conta;
+   - frequency: Frequência de emissão do extrato
+   ```
+   {
+      "POPLATEK MESICNE": "Mensal",
+      "POPLATEK TYDNE": "Semanal",
+      "POPLATEK PO OBRATU": "Por transação"
+   }
+   ```
+   - date: Data de criação da conta;
+   - loan_id: Chave de identificação do empréstimo (nulo para as 3818 contas sem empréstimo);
+   - loan_date: Data de concessão do empréstimo (nulo se sem empréstimo);
+   - loan_amount: Valor do empréstimo (nulo se sem empréstimo);
+   - loan_duration: Duração do empréstimo em meses (nulo se sem empréstimo);
+   - loan_payments: Valor do pagamento mensal (nulo se sem empréstimo);
+   - loan_status: Situação de pagamento do empréstimo (nulo se sem empréstimo)
+   ```
+   {
+      "A": "Contrato encerrado, sem dívidas",
+      "B": "Contrato encerrado, empréstimo não pago",
+      "C": "Contrato em vigor, em dia",
+      "D": "Contrato em vigor, cliente em débito"
+   }
+   ```
+- _order_ e _trans_: inalteradas (ver schema de origem acima).
+
+#### Diagrama Entidade-Relacionamento (conjunto reestruturado)
 
 ```mermaid
 erDiagram
@@ -313,383 +367,319 @@ erDiagram
         string account
     }
 ```
+### Camada Gold
 
-- _district_ (77 registros) — colunas A1..A16 renomeadas, dados inalterados:
-   - district_id (era A1), district_name (A2), region (A3), population (A4),
-     municipalities_under_499 (A5), municipalities_500_1999 (A6),
-     municipalities_2000_9999 (A7), municipalities_over_10000 (A8),
-     cities (A9), urban_population_ratio (A10), average_salary (A11),
-     unemployment_rate_1995 (A12), unemployment_rate_1996 (A13),
-     entrepreneurs_per_1000 (A14), crimes_1995 (A15), crimes_1996 (A16);
-- _client_ (5369 registros; consolida _client_ + _disp_ + _card_):
-   - client_id: Chave de identificação do cliente;
-   - account_id: Chave de identificação da conta (todo cliente pertence a exatamente 1 conta);
-   - relationship_type: Papel do cliente na conta
-   ```
-   {
-      "TITULAR": "Proprietário — único que pode emitir ordens ou contrair empréstimos",
-      "DEPENDENTE": "Dependente"
-   }
-   ```
-   - district_id: Chave de identificação do distrito de residência;
-   - gender: Sexo do cliente ('M'/'F'), derivado de `birth_number`;
-   - birth_date: Data de nascimento, derivada de `birth_number`;
-   - card_id: Chave de identificação do cartão (nulo para os 4477 clientes sem cartão — só titular pode ter);
-   - card_type: Tipo de cartão (nulo se sem cartão)
-   ```
-      'junior', 'classic' e 'gold'
-   ```
-   - card_issued: Data de emissão do cartão (nulo se sem cartão);
-- _account_ (4500 registros; consolida _account_ + _loan_):
-   - account_id: Chave de identificação da conta;
-   - district_id: Chave de identificação do distrito da conta;
-   - frequency: Frequência de emissão do extrato
-   ```
-   {
-      "POPLATEK MESICNE": "Mensal",
-      "POPLATEK TYDNE": "Semanal",
-      "POPLATEK PO OBRATU": "Por transação"
-   }
-   ```
-   - date: Data de criação da conta;
-   - loan_id: Chave de identificação do empréstimo (nulo para as 3818 contas sem empréstimo);
-   - loan_date: Data de concessão do empréstimo (nulo se sem empréstimo);
-   - loan_amount: Valor do empréstimo (nulo se sem empréstimo);
-   - loan_duration: Duração do empréstimo em meses (nulo se sem empréstimo);
-   - loan_payments: Valor do pagamento mensal (nulo se sem empréstimo);
-   - loan_status: Situação de pagamento do empréstimo (nulo se sem empréstimo)
-   ```
-   {
-      "A": "Contrato encerrado, sem dívidas",
-      "B": "Contrato encerrado, empréstimo não pago",
-      "C": "Contrato em vigor, em dia",
-      "D": "Contrato em vigor, cliente em débito"
-   }
-   ```
-- _order_ e _trans_: inalteradas (ver schema de origem acima).
+A camada Gold consolida os dados tratados na Silver em estruturas orientadas ao consumo analítico e à geração de features para modelos de aprendizado supervisionado. Nesta etapa, os dados são organizados em duas tabelas com diferentes granularidades: uma visão consolidada do cliente e uma visão temporal do seu comportamento financeiro.
 
-### Modelagem da Gold
+A Gold não define os modelos de ML nem seus conjuntos de treinamento. Seu objetivo é disponibilizar dados confiáveis, reutilizáveis e temporalmente consistentes para que diferentes times possam construir suas próprias features, visões analíticas e modelos.
 
-Objetivo final do projeto: treinar modelos de ML. Entre 3 propostas de
-modelagem avaliadas para a camada Gold — (1) risco de crédito
-(classificação de inadimplência de empréstimo, grão=loan), (2) previsão
-de fluxo de caixa mensal por conta (regressão, grão=conta×mês), (3)
-segmentação comportamental de clientes (não supervisionado) — foi
-escolhida a **Proposta 2**.
+#### `gold_client`
 
-**Grão:** 1 linha por `account_id` × `ano_mes` (chave composta).
-**Target:** `target_soma_entradas_proximo_mes` — soma das entradas
-(`trans.type == 'CREDITO'`) do mês seguinte, dentro da mesma conta.
+A tabela `gold_client` consolida as informações cadastrais, demográficas e financeiras em uma visão única para cada cliente, com granularidade de um registro por `client_id`. A tabela reúne atributos do cliente, distrito de residência, relacionamento com a conta, cartão e características do empréstimo, quando existentes.
 
-A tabela combina as 5 tabelas da Silver: agregados mensais de
-`trans` (o núcleo comportamental), atributos de `account` (idade da
-conta, frequência, termos do empréstimo), `client` (idade/sexo do
-titular, presença de dependente), `district` (contexto socioeconômico,
-denormalizado via `account.district_id`) e `order` (soma das ordens
-permanentes da conta). Ver `gold_features.py` mais abaixo para o schema
-completo, coluna a coluna.
+| Campo                             | Fonte Silver                      | Tipo    | Descrição                                                                                             |
+| --------------------------------- | --------------------------------- | ------- | ----------------------------------------------------------------------------------------------------- |
+| `client_id`                       | `client.client_id`                | string  | Identificador único do cliente. **PK**                                                                |
+| `account_id`                      | `client.account_id`               | string  | Identificador da conta associada ao cliente.                                                          |
+| `relationship_type`               | `client.relationship_type`        | string  | Papel do cliente na conta: `TITULAR` ou `DEPENDENTE`.                                                 |
+| `gender`                          | `client.gender`                   | string  | Sexo do cliente, derivado de `birth_number`.                                                          |
+| `birth_date`                      | `client.birth_date`               | date    | Data de nascimento do cliente.                                                                        |
+| `district_id`                     | `client.district_id`              | string  | Identificador do distrito de residência.                                                              |
+| `district_name`                   | `district.district_name`          | string  | Nome do distrito de residência.                                                                       |
+| `district_region`                 | `district.region`                 | string  | Região do distrito.                                                                                   |
+| `district_population`             | `district.population`             | int     | População do distrito.                                                                                |
+| `district_urban_ratio`            | `district.urban_population_ratio` | float   | Proporção da população urbana do distrito.                                                            |
+| `district_average_salary`         | `district.average_salary`         | int     | Salário médio do distrito.                                                                            |
+| `district_unemployment_1995`      | `district.unemployment_rate_1995` | float   | Taxa de desemprego do distrito em 1995.                                                               |
+| `district_unemployment_1996`      | `district.unemployment_rate_1996` | float   | Taxa de desemprego do distrito em 1996.                                                               |
+| `district_entrepreneurs_per_1000` | `district.entrepreneurs_per_1000` | int     | Número de empreendedores por 1000 habitantes.                                                         |
+| `district_crimes_1995`            | `district.crimes_1995`            | int     | Número de crimes registrados em 1995.                                                                 |
+| `district_crimes_1996`            | `district.crimes_1996`            | int     | Número de crimes registrados em 1996.                                                                 |
+| `account_district_id`             | `account.district_id`             | string  | Identificador do distrito da conta.                                                                   |
+| `account_frequency`               | `account.frequency`               | string  | Frequência de emissão do extrato.                                                                     |
+| `account_open_date`               | `account.date`                    | date    | Data de criação da conta.                                                                             |
+| `has_card`                        | Derivado de `client.card_id`      | boolean | Indica se o cliente possui cartão.                                                                    |
+| `card_type`                       | `client.card_type`                | string  | Tipo do cartão: `junior`, `classic` ou `gold`.                                                        |
+| `card_issued_date`                | `client.card_issued`              | date    | Data de emissão do cartão.                                                                            |
+| `has_loan`                        | Derivado de `account.loan_id`     | boolean | Indica se a conta possui empréstimo.                                                                  |
+| `loan_date`                       | `account.loan_date`               | date    | Data de concessão do empréstimo.                                                                      |
+| `loan_amount`                     | `account.loan_amount`             | decimal | Valor concedido no empréstimo.                                                                        |
+| `loan_duration`                   | `account.loan_duration`           | int     | Duração do empréstimo em meses.                                                                       |
+| `loan_payments`                   | `account.loan_payments`           | decimal | Valor da parcela mensal.                                                                              |
+| `loan_payment_ratio`              | Derivado                          | decimal | Relação entre o pagamento mensal e o valor do empréstimo.                                             |
+| `loan_status`                     | `account.loan_status`             | string  | Situação observada do empréstimo. Utilizado como origem do label de inadimplência e não como feature. |
 
-**Duas decisões deliberadas para evitar vazamento de informação do
-futuro:**
-- `loan_status` (desfecho final do empréstimo) **não é usada como
-  feature** — é determinada possivelmente depois do mês sendo modelado;
-  usá-la em todas as linhas do empréstimo vazaria o resultado final para
-  trás na série. Em vez disso, cada linha carrega só `loan_ativo_no_mes`
-  (o empréstimo já existia e ainda não tinha terminado naquele mês — um
-  fato conhecido na época) e `loan_payments` (valor fixo do pagamento,
-  conhecido desde a concessão). Mesma lógica para `card_ativo_no_mes`.
-- Os dados sintéticos (etapa removida do projeto — ver histórico) não
-  entram na Gold: a tentativa de sintetizar `trans` via bootstrap de
-  linha real + jitter não agrega informação genuinamente nova (é a
-  mesma observação real, perturbada) e introduz risco de vazamento entre
-  treino e teste por quase-duplicação. A Gold é construída só com dados
-  reais.
+Os atributos de cliente e cartão são provenientes da consolidação de `client`, `disp` e `card`, enquanto os atributos de empréstimo são provenientes da consolidação de `account` e `loan`.
 
-**Preenchimento de gaps mensais:** cada conta é reindexada para um
-calendário contínuo entre o primeiro e o último mês com qualquer
-transação (não só as de crédito). Meses sem transação viram
-`soma_entradas_mes_atual`/`soma_saidas_mes_atual`/`n_transacoes_mes = 0`;
-`saldo_fim_mes` é propagado do último mês observado. Sem isso, a janela
-móvel e o `shift` do target operariam sobre *linhas* em vez de meses de
-calendário.
+#### `gold_client_monthly_movements`
 
-**Resultado real:** 185.326 linhas conta-mês na janela completa (269
-delas preenchidas por gap-fill) → **171.826 linhas finais**, após remover
-as bordas de cada conta (início: sem janela móvel completa; fim: sem mês
-seguinte para o target).
+A tabela `gold_client_monthly_movements` representa o comportamento financeiro dos clientes ao longo do tempo, com granularidade de um registro por `client_id` e mês de referência. As movimentações são agregadas a partir das transações associadas à conta do cliente, gerando indicadores de volume, entradas, saídas, saldo, composição das operações e comportamento histórico.
 
-### Pipeline de treinamento do modelo
+A tabela de origem `_trans_` possui 1.056.320 registros, que são transformados em uma série temporal mensal nesta etapa. A tabela pode contemplar até os 5.369 clientes disponíveis no Silver, enquanto a quantidade final de registros dependerá dos meses em que cada cliente apresentou movimentações.
 
-Três propostas de pipeline foram avaliadas: **(A)** regressão linear
-regularizada (Ridge) com holdout temporal simples; **(B)** gradient
-boosting (XGBoost) com validação walk-forward; **(C)** modelagem
-sequencial por conta (ex.: GRU/LSTM sobre a série mensal de cada conta).
-**Escolhida: Proposta B**, com a Proposta A treinada em paralelo como
-baseline de comparação (nunca reportar um modelo mais complexo sem uma
-baseline simples provando que ele agrega valor). A Proposta C foi
-descartada: contas têm histórico curto (mediana bem abaixo do máximo de
-69 meses), exigiria uma dependência pesada nunca usada no projeto
-(`torch`/`tensorflow`), e contornaria o trabalho de engenharia de
-features já feito na Gold.
+| Campo                          | Fonte                        | Descrição                                                    |
+| ------------------------------ | ---------------------------- | ------------------------------------------------------------ |
+| `client_id`                    | `client.client_id`           | Identificador do cliente. **PK composta**                    |
+| `account_id`                   | `client.account_id`          | Identificador da conta associada ao cliente.                 |
+| `reference_month`              | Derivado de `trans.date`     | Mês de referência da agregação. **PK composta**              |
+| `account_age_months`           | Derivado                     | Idade da conta em meses no período.                          |
+| `year`                         | Derivado                     | Ano da movimentação.                                         |
+| `month`                        | Derivado                     | Mês da movimentação.                                         |
+| `transaction_count`            | `COUNT(trans_id)`            | Número total de transações no mês.                           |
+| `active_days`                  | `COUNT(DISTINCT date)`       | Número de dias com movimentação.                             |
+| `credit_transaction_count`     | `type`                       | Quantidade de transações de crédito.                         |
+| `debit_transaction_count`      | `type`                       | Quantidade de transações de débito ou saída.                 |
+| `withdrawal_transaction_count` | `operation`                  | Quantidade de saques.                                        |
+| `transfer_transaction_count`   | `operation`                  | Quantidade de transferências.                                |
+| `inflow_amount`                | `type = PRIJEM`              | Total de recursos recebidos no mês.                          |
+| `outflow_amount`               | `type IN (VYDAJ, VYBER)`     | Total de recursos debitados no mês.                          |
+| `net_flow`                     | Derivado                     | Diferença entre entradas e saídas.                           |
+| `avg_transaction_amount`       | `amount`                     | Valor médio das transações.                                  |
+| `min_transaction_amount`       | `amount`                     | Menor valor de transação.                                    |
+| `max_transaction_amount`       | `amount`                     | Maior valor de transação.                                    |
+| `opening_balance`              | Derivado de `balance`        | Saldo estimado no início do período.                         |
+| `closing_balance`              | Derivado de `balance`        | Saldo observado após a última transação do mês.              |
+| `avg_balance`                  | `AVG(balance)`               | Saldo médio observado no mês.                                |
+| `min_balance`                  | `MIN(balance)`               | Menor saldo observado no mês.                                |
+| `max_balance`                  | `MAX(balance)`               | Maior saldo observado no mês.                                |
+| `cash_withdrawal_amount`       | `operation = VYBER`          | Valor total de saques em dinheiro.                           |
+| `card_withdrawal_amount`       | `operation = VYBER KARTOU`   | Valor total de saques com cartão.                            |
+| `transfer_out_amount`          | `operation = PREVOD NA UCET` | Valor total de transferências enviadas.                      |
+| `transfer_in_amount`           | `operation = PREVOD Z UCTU`  | Valor total de transferências recebidas.                     |
+| `loan_payment_amount`          | `k_symbol = UVER`            | Valor total de pagamentos de empréstimos.                    |
+| `insurance_payment_amount`     | `k_symbol = POJISTNE`        | Valor total de pagamentos de seguros.                        |
+| `domestic_payment_amount`      | `k_symbol = SIPO`            | Valor total de pagamentos domésticos.                        |
+| `leasing_payment_amount`       | `k_symbol = LEASING`         | Valor total de pagamentos de leasing.                        |
+| `interest_amount`              | `k_symbol = UROK`            | Valor associado a juros.                                     |
+| `penalty_interest_amount`      | `k_symbol = SANKC. UROK`     | Valor associado a juros de penalidade.                       |
+| `loan_payment_count`           | `k_symbol = UVER`            | Quantidade de pagamentos de empréstimos.                     |
+| `transfer_out_count`           | `operation`                  | Quantidade de transferências enviadas.                       |
+| `transfer_in_count`            | `operation`                  | Quantidade de transferências recebidas.                      |
+| `cash_withdrawal_count`        | `operation`                  | Quantidade de saques em dinheiro.                            |
+| `card_withdrawal_count`        | `operation`                  | Quantidade de saques com cartão.                             |
+| `previous_month_outflow`       | `LAG(outflow_amount)`        | Total de saídas do mês anterior.                             |
+| `previous_month_inflow`        | `LAG(inflow_amount)`         | Total de entradas do mês anterior.                           |
+| `outflow_3m_avg`               | Média móvel                  | Média das saídas dos últimos 3 meses.                        |
+| `outflow_3m_sum`               | Soma móvel                   | Soma das saídas dos últimos 3 meses.                         |
+| `outflow_6m_avg`               | Média móvel                  | Média das saídas dos últimos 6 meses.                        |
+| `inflow_3m_avg`                | Média móvel                  | Média das entradas dos últimos 3 meses.                      |
+| `avg_balance_3m`               | Média móvel                  | Saldo médio observado nos últimos 3 meses.                   |
+| `transaction_count_3m_avg`     | Média móvel                  | Média da quantidade de transações dos últimos 3 meses.       |
+| `outflow_mom_change`           | Derivado                     | Variação percentual das saídas em relação ao mês anterior.   |
+| `inflow_mom_change`            | Derivado                     | Variação percentual das entradas em relação ao mês anterior. |
+| `balance_mom_change`           | Derivado                     | Variação do saldo em relação ao mês anterior.                |
 
-**Validação — sempre walk-forward, nunca split aleatório de linhas:** o
-problema é forecasting em painel (várias contas, cada uma com sua própria
-série mensal) — um split aleatório vazaria informação entre meses
-vizinhos da mesma conta. `train_model.py` usa:
-- **4 folds walk-forward** (janela expansiva): a cada fold, o treino é
-  tudo até um corte de data e a validação são os 3 meses seguintes — a
-  janela de treino só cresce, nunca usa dado do futuro.
-- **1 holdout final**: os últimos 3 meses da base (1998-09 a 1998-11),
-  nunca tocados até a avaliação final — simula a implantação real.
+Os campos derivados da janela temporal devem ser calculados utilizando apenas informações disponíveis até o mês de referência, evitando que dados futuros sejam incorporados às features.
 
-**Transformação:** o target e as features monetárias (fortemente
-assimétricas — ver `notebooks/eda_silver.ipynb`) recebem `signed_log1p`
-(`sign(x) * log1p(|x|)` — generaliza `log1p` para aceitar `saldo_fim_mes`
-negativo) antes do treino; as métricas são sempre revertidas para a
-escala original (moeda) antes de calcular MAE/RMSE/R². `district_id` não
-entra como feature — é um identificador de alta cardinalidade cuja
-informação já está denormalizada nas colunas socioeconômicas da Gold.
+#### Diagrama Entidade-Relacionamento
 
-**Resultado (holdout final, 1998-09 a 1998-11):**
+```mermaid
+erDiagram
+    GOLD_CLIENT ||--o{ GOLD_CLIENT_MONTHLY_MOVEMENTS : "possui histórico mensal"
 
-| Modelo | MAE | RMSE | R² |
-|---|---|---|---|
-| Ridge (baseline) | 7.563 | 17.295 | 0,289 |
-| **XGBoost** | **6.057** | 17.595 | 0,265 |
+    GOLD_CLIENT {
+        string client_id PK
+        string account_id
+        string relationship_type
+        string gender
+        date birth_date
+        string district_id
+        string district_name
+        string district_region
+        int district_population
+        float district_urban_ratio
+        int district_average_salary
+        float district_unemployment_1995
+        float district_unemployment_1996
+        int district_entrepreneurs_per_1000
+        int district_crimes_1995
+        int district_crimes_1996
+        string account_district_id
+        string account_frequency
+        date account_open_date
+        boolean has_card
+        string card_type
+        date card_issued_date
+        boolean has_loan
+        date loan_date
+        decimal loan_amount
+        int loan_duration
+        decimal loan_payments
+        decimal loan_payment_ratio
+        string loan_status
+    }
 
-O XGBoost erra ~20% menos em média (MAE) que o Ridge — confirma que a
-Proposta B agrega valor sobre o baseline linear. Mas é um resultado misto,
-não uma vitória limpa: o Ridge tem RMSE e R² levemente melhores, ou seja,
-o XGBoost acerta melhor o caso típico mas comete alguns erros grandes que
-penalizam mais o RMSE (que pune erro ao quadrado) do que o MAE. R² em
-torno de 0,25-0,29 nos dois modelos indica que boa parte da variação nas
-entradas do mês seguinte não é explicada pelas features atuais — esperado
-para fluxo de caixa pessoal (inerentemente ruidoso), mas deixa espaço
-real para iteração futura (ajuste de hiperparâmetros, mais features).
-`soma_entradas_mes_atual`, `media_entradas_ultimos_3_meses` e
-`n_transacoes_mes` são as features mais importantes no XGBoost.
-
-**Versionamento e gestão de artefatos — MLflow:** cada execução de
-`train_model.py` registra tudo no MLflow (tracking store local em
-SQLite, sem servidor — ver seção do script mais abaixo): uma run pai
-(`train_model`, parâmetros gerais + resumo do walk-forward) com runs
-filhas aninhadas por fold e uma `holdout_final`, onde os 2 modelos finais
-são logados **e registrados** no Model Registry
-(`inflow-forecast-ridge`, `inflow-forecast-xgboost`) — cada execução cria
-uma nova versão, nada é sobrescrito, e cada versão carrega a métrica de
-holdout na própria descrição. Para explorar:
-`mlflow ui --backend-store-uri sqlite:///datalake/gold/models/mlflow.db`.
-
-Para este projeto foi provisionado um datalake baseado na arquitetura Medallion, hospedado numa infraestrutura local. 
-- Camada raw: contém os arquivos brutos no formato `.csv` do [The Berka Dataset](https://www.kaggle.com/datasets/marceloventura/the-berka-dataset). 
-- Camada bronze: Cópia fiel dos arquivos originais, no formato `.parquet`.
-- Camada silver: dados originais do conjunto devidamente tratados e reorganizados (ver [Reorganização na Silver](#reorganização-na-silver)). O tratamento inclui a tipagem correta de cada coluna, o preenchimento dos valores nulos, datas parseadas e valores categóricos traduzidos para português.
-- Camada gold: `account_monthly_features`, feature store pronta para ML (ver [Modelagem da Gold](#modelagem-da-gold)).
-
-### Estrutura gerada
-
-```
-datalake/
-├── raw/                  # arquivos brutos, sem alterações
-├── bronze/               # arquivos da camada raw no formato .parquet.
-├── silver/                # dados devidamente tipados, nulos tratados, datas parseadas.
-└── gold/
-    ├── account_monthly_features.parquet   # feature store (grão: conta x mês).
-    └── models/
-        ├── mlflow.db                             # tracking store do MLflow (SQLite).
-        ├── mlruns/                                # artefatos do MLflow (modelos versionados, por run).
-        ├── cv_metrics_walk_forward.csv           # métricas por fold (média +/- desvio-padrão).
-        ├── holdout_metrics.csv                   # métricas no holdout final.
-        └── xgboost_feature_importances.csv       # importância nativa das features.
-```
-
-```
-notebooks/
-└── eda_silver.ipynb        # EDA da Silver (todas as 5 tabelas).
-```
-
-### Datalake Setup
-
-```bash
-# 1. Criação do ambiente virtual
-python3 -m venv .datalake-venv
-source .datalake-venv/bin/activate
-
-# 2. Instação de dependências
-pip install -r requirements.txt
-
-# 3. Credenciais da Kaggle API 
-##    Gere o token em https://www.kaggle.com/settings/api > Generate New Token
-##    Alternativas também suportadas pelo script:
-##      - variável de ambiente KAGGLE_API_TOKEN=<token>
-##      - formato legacy ~/.kaggle/kaggle.json com {"username":..., "key":...}
-mkdir -p ~/.kaggle
-mv ~/Downloads/token ~/.kaggle/access_token   # Cole apenas o valor do token no arquivo
-chmod 600 ~/.kaggle/access_token
-
-# 4. Setup  inicial (Criação dos diretórios e dowload dos arquivos brutos)
-python src/scripts/datalake_setup.py
-
-# 5. Ingestão e processamento I (raw -> bronze)
-python src/scripts/raw_to_bronze.py
-
-# 6. Ingestão e processamento II (bronze -> silver)
-python src/scripts/bronze_to_silver.py
-
-# 7. Feature store para ML (silver -> gold)
-python src/scripts/gold_features.py
-
-# 8. Treino e validação do modelo (gold -> gold/models)
-python src/scripts/train_model.py
+    GOLD_CLIENT_MONTHLY_MOVEMENTS {
+        string client_id PK
+        string account_id
+        date reference_month PK
+        int account_age_months
+        int year
+        int month
+        int transaction_count
+        int active_days
+        int credit_transaction_count
+        int debit_transaction_count
+        int withdrawal_transaction_count
+        int transfer_transaction_count
+        decimal inflow_amount
+        decimal outflow_amount
+        decimal net_flow
+        decimal avg_transaction_amount
+        decimal min_transaction_amount
+        decimal max_transaction_amount
+        decimal opening_balance
+        decimal closing_balance
+        decimal avg_balance
+        decimal min_balance
+        decimal max_balance
+        decimal cash_withdrawal_amount
+        decimal card_withdrawal_amount
+        decimal transfer_out_amount
+        decimal transfer_in_amount
+        decimal loan_payment_amount
+        decimal insurance_payment_amount
+        decimal domestic_payment_amount
+        decimal leasing_payment_amount
+        decimal interest_amount
+        decimal penalty_interest_amount
+        int loan_payment_count
+        int transfer_out_count
+        int transfer_in_count
+        int cash_withdrawal_count
+        int card_withdrawal_count
+        decimal previous_month_outflow
+        decimal previous_month_inflow
+        decimal outflow_3m_avg
+        decimal outflow_3m_sum
+        decimal outflow_6m_avg
+        decimal inflow_3m_avg
+        decimal avg_balance_3m
+        decimal transaction_count_3m_avg
+        decimal outflow_mom_change
+        decimal inflow_mom_change
+        decimal balance_mom_change
+    }
 ```
 
-## O que os scripts fazem
+## Modelos Supervisionados
 
-Padrão de código e documentação (docstrings, comentários, o que vive em
-`_common.py` vs. em cada script) documentado em [CONTRIBUTING.md](CONTRIBUTING.md).
+A partir da camada Gold serão construídos os datasets específicos para treinamento dos modelos. As tabelas Gold fornecem as variáveis observadas e derivadas, enquanto os **targets** são definidos de acordo com cada problema de negócio.
 
-### `datalake_setup.py` (Raw)
+Essa separação permite reutilizar a mesma Gold em diferentes modelos e evita que variáveis que representam o futuro sejam disponibilizadas como features.
 
-1. Cria (de forma idempotente) as pastas da arquitetura Medallion.
-2. Valida se as credenciais da Kaggle API estão configuradas.
-3. Baixa o dataset `marceloventura/the-berka-dataset` (.zip).
-4. Extrai o `.zip` em uma pasta temporária.
-5. Move todos os `.csv` extraídos para `datalake/raw/`, sem alterar o
-   conteúdo (via `shutil.move`).
-6. Remove o `.zip` e a pasta temporária de extração.
+### Modelo de regressão | Gastos do próximo mês
 
-### `raw_to_bronze.py` (Bronze)
+O objetivo deste modelo é prever o valor total de saídas de um cliente no mês seguinte.
 
-1. Lê todos os `.csv` de `datalake/raw/` (delimitador `;`).
-2. Converte cada um para `.parquet` (pandas + pyarrow) mantendo o mesmo
-   nome (ex.: `client.csv` -> `client.parquet`).
-3. Cópia 1:1: todas as colunas são lidas como `dtype=str`, sem inferência
-   de tipo nem interpretação de valores nulos (`keep_default_na=False`),
-   garantindo que a Bronze seja fiel byte-a-byte à Raw, só que em formato
-   colunar.
-4. Registra no log o número de linhas e colunas de cada arquivo
-   convertido; falhas em um arquivo não interrompem os demais.
+Matematicamente:
 
-### `bronze_to_silver.py` (Silver)
-
-1. Lê cada `.parquet` da Bronze (tudo `string`) e normaliza `""`, `" "` e
-   `'?'` (marcador de nulo usado em `district.A12`/`A15`) para `NaN`.
-2. Classifica colunas por nome/conteúdo: `id`, `*_id`, `*_to`, e
-   `trans.account`/`district.A1` (overrides explícitos, pois não seguem a
-   convenção de sufixo) permanecem `string`; `date` e `card.issued`
-   (YYMMDD, também um override explícito) viram `datetime` (assume século
-   19xx); demais colunas 100% numéricas viram `int` ou `float`; o restante
-   permanece texto. O override de `district.A1` garante que a chave bata
-   em tipo com as FKs `account.district_id`/`client.district_id` (ambas
-   `string`), permitindo o join direto entre as tabelas.
-3. Trata nulos: mediana para colunas numéricas, `'DESCONHECIDO'` para
-   texto/categóricas (inclui as colunas de ID).
-4. Regra específica da tabela `client`: decompõe `birth_number` em
-   `gender` ('M'/'F') e `birth_date` (`datetime`), removendo a coluna
-   original.
-5. Traduz/adapta para português brasileiro os valores categóricos
-   originalmente em tcheco (`CATEGORICAL_TRANSLATIONS`): ex.
-   `account.frequency` (`POPLATEK MESICNE` -> `MENSAL`), `disp.type`
-   (`OWNER` -> `TITULAR`), `trans.type` (`PRIJEM` -> `CREDITO`),
-   `trans.operation`, `trans.k_symbol`/`order.k_symbol` e `loan.status`
-   (códigos A-D adaptados para rótulos descritivos, ex. `ATIVO ADIMPLENTE`).
-6. Com as 8 tabelas tratadas, consolida o schema (ver
-   [Reorganização na Silver](#reorganização-na-silver)):
-   `disp` + `card` -> `client`; `loan` -> `account` (merges 1:1, via
-   `pd.merge(..., validate="one_to_one")` — o próprio pandas barra a
-   gravação caso a premissa de cardinalidade deixe de valer no futuro);
-   `district` só tem as colunas A1..A16 renomeadas.
-7. Grava o resultado em `datalake/silver/` (5 tabelas: `district`,
-   `client`, `account`, `order`, `trans`), removendo arquivos de uma
-   execução anterior ao schema reorganizado
-   (`disp.parquet`/`card.parquet`/`loan.parquet`), com logs detalhados
-   por tabela (classificação de colunas, nulos preenchidos e valores
-   traduzidos).
-
-Todo o progresso é registrado via `logging` (nível INFO).
-
-### `gold_features.py` (Gold)
-
-Ver [Modelagem da Gold](#modelagem-da-gold) para o racional completo do
-grão, do target e das decisões de design (por que `loan_status` não é
-usada, por que os dados sintéticos ficam de fora).
-
-1. Lê as 5 tabelas da Silver.
-2. Monta as features estáticas por conta: `district` denormalizada (via
-   `account.district_id`), sexo/idade do titular, presença de
-   dependente, soma das ordens permanentes da conta.
-3. Agrega `trans` por conta e mês: soma de entradas (`type == 'CREDITO'`)
-   e saídas (`type` em `{DEBITO, SAQUE}`), saldo do fim do mês (última
-   transação), nº de transações.
-4. Preenche os gaps mensais: reindexa cada conta para um calendário
-   contínuo entre o primeiro e o último mês com qualquer transação
-   (entradas/saídas/contagem viram 0; saldo é propagado do último mês
-   observado).
-5. Junta as features estáticas e deriva as dependentes do mês: idade da
-   conta, idade do titular, `loan_ativo_no_mes`/`loan_payments` e
-   `card_ativo_no_mes` (só presença, nunca o desfecho final — evita
-   vazamento), mês do ano.
-6. Calcula as features de janela móvel de 3 meses
-   (`media_entradas_ultimos_3_meses`, `desvio_padrao_entradas_ultimos_3_meses`,
-   `media_saidas_ultimos_3_meses`) e o target
-   (`target_soma_entradas_proximo_mes`, `shift(-1)` dentro do grupo da
-   conta).
-7. Remove as linhas de borda (sem janela completa ou sem mês seguinte) e
-   grava `datalake/gold/account_monthly_features.parquet`, com chave
-   composta `account_id` + `ano_mes`.
-
-Todo o progresso é registrado via `logging` (nível INFO).
-
-### `train_model.py` (Gold -> Gold/models)
-
-Ver [Pipeline de treinamento do modelo](#pipeline-de-treinamento-do-modelo)
-para o racional completo (as 3 propostas avaliadas, a escolha, e os
-resultados).
-
-1. Aponta o MLflow para o tracking store local (SQLite,
-   `datalake/gold/models/mlflow.db`; artefatos em
-   `datalake/gold/models/mlruns/`) e abre a run pai `train_model`.
-2. Lê a Gold e adiciona `mes_sin`/`mes_cos` (codificação cíclica do mês,
-   usada só pelo Ridge).
-3. Monta os 4 folds de validação walk-forward (janela expansiva, 3 meses
-   de validação cada) mais o holdout final (últimos 3 meses).
-4. Em cada fold (run filha `fold_N`, aninhada): treina `Ridge` (pipeline
-   com imputação, `signed_log1p` nas colunas monetárias, escala e
-   one-hot) e `XGBoost` (colunas categóricas como código inteiro fixo —
-   não dtype `category` nativo, que não sobrevive ao round-trip JSON de
-   serving do MLflow; sem imputação — `NaN` de `loan_payments` é nativo)
-   no treino do fold; avalia (MAE/RMSE/R², sempre na escala original) na
-   validação do fold; loga parâmetros e métricas de ambos os modelos na
-   run do fold.
-5. Loga na run pai o resumo agregado (média/desvio-padrão entre os 4
-   folds) e o CSV `cv_metrics_walk_forward.csv` como artefato.
-6. Repete o treino+avaliação uma última vez no holdout final (run filha
-   `holdout_final`: treino = todo o pool de CV; validação = os últimos 3
-   meses, nunca vistos até aqui) — loga métricas, `holdout_metrics.csv` e
-   `xgboost_feature_importances.csv` como artefatos.
-7. **Loga e registra** os 2 modelos finais no Model Registry
-   (`inflow-forecast-ridge`, `inflow-forecast-xgboost`, com assinatura de
-   entrada/saída inferida do exemplo) — cada execução cria uma nova
-   versão; a descrição de cada versão registrada carrega as métricas de
-   holdout daquela execução.
-
-Todo o progresso é registrado via `logging` (nível INFO).
-
-## Notebook de EDA
-
-`notebooks/eda_silver.ipynb` cobre as 5 tabelas da Silver em profundidade,
-com a mesma estrutura para cada uma: (1) dicionário de dados, (2) volume/
-tipo/formato, (3) indicadores e chaves primárias/estrangeiras, (4) nulos,
-duplicatas e valores fora do padrão (outliers por IQR, taxa do marcador
-`'DESCONHECIDO'`), (5) gráficos (seaborn — dispersão, histograma, barra,
-boxplot, heatmap de correlação, série temporal), e (6) insights voltados
-para a modelagem da Gold. Os gráficos usam uma paleta categórica fixa (8
-cores, nunca redistribuída por rank) e rampas sequencial/divergente de um
-único matiz cada, para leitura consistente entre os gráficos. Para rodar:
-
-```bash
-source .venv/bin/activate
-jupyter nbconvert --to notebook --execute --inplace notebooks/eda_silver.ipynb
-# ou abrir interativamente:
-jupyter lab notebooks/eda_silver.ipynb
+```text
+X(T) → y(T+1)
 ```
+
+Onde:
+
+```text
+X(T) = comportamento observado até o mês T
+y(T+1) = outflow do cliente no mês T+1
+```
+
+**Variável alvo:**
+
+```text
+next_month_outflow = outflow_amount(T+1)
+```
+
+A variável `next_month_outflow` não faz parte da Gold nem do conjunto de features disponibilizado no Feature Store. Ela é construída durante a preparação do dataset de treinamento, deslocando `outflow_amount` para o mês seguinte.
+
+**Granularidade:**
+
+```text
+1 observação = 1 cliente por mês
+```
+
+A tabela de origem possui 1.056.320 transações, que são agregadas em registros mensais por cliente. A quantidade final de observações do modelo será determinada após essa agregação e depende da existência de movimentações em cada período.
+
+**Modelos:**
+
+```text
+Regressão Linear (baseline)
+        ↓
+Random Forest Regressor
+        ↓
+Gradient Boosting
+        ↓
+XGBoost
+```
+
+A regressão linear será utilizada como baseline para estabelecer uma referência simples de desempenho. Os demais modelos serão avaliados para verificar se relações não lineares e interações entre as features contribuem para melhorar as previsões.
+
+**Métricas observadas:**
+
+```text
+MAE
+RMSE
+R²
+```
+
+O MAE será utilizado para interpretar diretamente o erro médio de previsão, enquanto o RMSE dará maior peso a erros elevados e o R² permitirá avaliar a capacidade explicativa do modelo.
+
+#### Features
+
+**Visão mensal:**
+
+```text
+active_days
+inflow_amount
+outflow_amount
+net_flow
+transaction_count
+avg_transaction_amount
+max_transaction_amount
+opening_balance
+closing_balance
+avg_balance
+min_balance
+max_balance
+cash_withdrawal_amount
+card_withdrawal_amount
+transfer_out_amount
+loan_payment_amount
+insurance_payment_amount
+domestic_payment_amount
+leasing_payment_amount
+```
+
+**Histórico:**
+
+```text
+previous_month_outflow
+previous_month_inflow
+outflow_3m_avg
+outflow_3m_sum
+outflow_6m_avg
+inflow_3m_avg
+avg_balance_3m
+transaction_count_3m_avg
+outflow_mom_change
+inflow_mom_change
+balance_mom_change
+```
+
+Devido ao caráter temporal dos dados, o conjunto de treinamento não será dividido aleatoriamente. A divisão será realizada respeitando a ordem cronológica dos registros:
+
+```text
+Train      → 70% inicial do período
+Validation → 20% seguinte
+Test       → 10% final
+```
+
+Dessa forma, o modelo será treinado utilizando informações do passado e avaliado progressivamente em períodos posteriores, reduzindo o risco de *data leakage*.
+
+---
+
+### Modelo de classificação | Inadimplência
+
+O objetivo deste modelo é prever se um empréstimo apresentará comportamento de inadimplência.
+TBD
