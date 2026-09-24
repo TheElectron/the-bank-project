@@ -12,7 +12,7 @@ Legenda: ⬜ não iniciada · 🚧 em andamento · ✅ concluída
 | 1a   | Ingestão Kaggle → Raw → Bronze                                  | 1, 3                | ✅     |
 | 1b   | Airflow (imagem própria + compose) e DAG de ingestão            | 2                   | ✅     |
 | 2    | Bronze → Silver                                                 | 3                   | ✅     |
-| 3    | Silver → Gold                                                   | 3                   | ⬜     |
+| 3    | Silver → Gold                                                   | 3                   | ✅     |
 | 4    | Feature Store (Feast)                                           | 4                   | ⬜     |
 | 5    | Treino, validação e ciclo de vida dos modelos (MLflow)          | 5                   | ⬜     |
 | 6    | Inferência via API (FastAPI + Docker)                           | 6                   | ⬜     |
@@ -31,7 +31,9 @@ Legenda: ⬜ não iniciada · 🚧 em andamento · ✅ concluída
   `docker-compose.yml` da raiz cresce por fase.
 - **Dependências isoladas:** o Airflow roda só em imagem Docker própria
   (`docker/airflow/`), instalado com os *constraints* oficiais, fora do
-  `pyproject.toml`, para evitar conflito com Feast/MLflow/Evidently.
+  `pyproject.toml`, para evitar conflito com Feast/MLflow/Evidently. O código do projeto roda num venv da
+  própria imagem (`@task.external_python`), com as dependências do `pyproject.toml`: assim
+  as tasks usam as mesmas versões do dev/CI, não as fixadas pelos constraints do Airflow.
 - **Config tipada:** `configs/*.yaml` carregados via Pydantic; nada de paths ou
   credenciais hardcoded (`.env` para segredos, com `.env.example` versionado).
 - **Entidade do projeto é `account_id`** (decisão de 2026-09-23): ver Fase 3.
@@ -136,6 +138,13 @@ Descrito em detalhes no README ("Camada Gold"), **com a mudança de entidade**:
   (anti-vazamento). O target **não** entra na Gold.
 - Validações: PK única, sem `NaN` onde não deve haver, consistência das
   janelas. Task adicionada à DAG.
+
+Implementado em `src/the_bank_project/gold/` (`account.py`, `monthly.py`,
+`checks.py`, CLI `make gold`); tabelas em `data/gold/gold_account.parquet` e
+`gold_account_monthly_movements.parquet`. Decisões: `reference_month` é o último
+dia do mês; meses sem movimento entram com fluxo 0; saldo de abertura/fechamento
+resolvido pela cadeia de `balance` (o `trans_id` não ordena dentro do dia).
+O README foi atualizado junto (seção "Camada Gold").
 
 ## Fase 4 — Feature Store (Feast)
 

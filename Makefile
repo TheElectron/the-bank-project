@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install lint format typecheck test check hooks ingest silver up down dag-check clean
+.PHONY: help install lint format typecheck test check hooks ingest silver gold up down dag-check clean
 
 help:  ## Lista os comandos
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -32,6 +32,9 @@ ingest:  ## Ingestão Kaggle → Raw → Bronze
 silver:  ## Bronze → Silver (tipagem, traduções e checks)
 	poetry run python -m the_bank_project.silver
 
+gold:  ## Silver → Gold (features por conta e série mensal)
+	poetry run python -m the_bank_project.gold
+
 up:  ## Sobe o Airflow (UI em http://localhost:8080)
 	AIRFLOW_UID=$$(id -u) docker compose up -d --build
 
@@ -39,7 +42,7 @@ down:  ## Derruba a infra local
 	docker compose down
 
 dag-check:  ## Valida que as DAGs importam (dentro da imagem do Airflow)
-	AIRFLOW_UID=$$(id -u) docker compose run --rm --no-deps -e AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=sqlite:////tmp/dagcheck.db airflow-scheduler python /opt/airflow/scripts/check_dags.py
+	AIRFLOW_UID=$$(id -u) docker compose run --rm --no-deps --build -e AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=sqlite:////tmp/dagcheck.db airflow-scheduler python /opt/airflow/scripts/check_dags.py
 
 clean:  ## Remove caches
 	rm -rf .pytest_cache .mypy_cache .ruff_cache .coverage htmlcov

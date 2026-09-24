@@ -20,3 +20,9 @@ jobs:
       - run: poetry run ruff format --check .
       - run: poetry run mypy
       - run: poetry run pytest --cov=the_bank_project
+
+  dags:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make dag-check

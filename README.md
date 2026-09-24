@@ -5,10 +5,24 @@ O projeto está baseado em 3 etapas.
 - Geração de um modelo de ML;
 - Geração de um chat conversacional;
 
+## Pipeline de dados
+
+Kaggle → Raw → Bronze → Silver → Gold, orquestrado por uma DAG do Airflow (`data_pipeline`) que só chama o código do pacote `the_bank_project`. Cada etapa também roda sozinha, pelo Makefile:
+
+| Comando          | Etapa                                                                 |
+| ---------------- | --------------------------------------------------------------------- |
+| `make ingest`    | Kaggle → Raw (`.csv`) → Bronze (`.parquet`, cópia 1:1)                |
+| `make silver`    | Bronze → Silver (tipagem, nulos, traduções, 8 → 5 tabelas, checks)    |
+| `make gold`      | Silver → Gold (`gold_account` e `gold_account_monthly_movements`)     |
+| `make up`/`down` | Sobe/derruba o Airflow em Docker (UI em http://localhost:8080)        |
+| `make check`     | Lint, type check e testes (o mesmo que o CI roda)                     |
+
+As credenciais do Kaggle vão em `.env` (modelo em `.env.example`). Os dados ficam em `data/{raw,bronze,silver,gold}/`, fora do git. Todas as etapas são idempotentes: reexecutar sobrescreve o resultado sem duplicar nada. Feature store (Feast), treino, serving e monitoramento ainda não foram implementados; ver `ROADMAP.md`.
+
 ## Dados
 
 ### Camada Bronze
-O ponto de partida deste projeto é o [The Berka Dataset](https://www.kaggle.com/datasets/marceloventura/the-berka-dataset), este conjunto de dados reune informações financeiras de um banco tcheco para o ano de 1999.\
+O ponto de partida deste projeto é o [The Berka Dataset](https://www.kaggle.com/datasets/marceloventura/the-berka-dataset), este conjunto de dados reune informações financeiras de um banco tcheco, com transações de 1993 a 1998 (dataset divulgado em 1999).\
 Temos disponíveis oito tabelas, cada uma delas com o seguinte _schema_ de dados:
 
 - _account_ (4500 registros):
@@ -241,7 +255,7 @@ validado contra os dados reais antes da implementação:
 - toda `account` tem no máximo 1 `loan`.
 
 Como resultado, temos:
-- _district_ (77 registros) — colunas A1..A16 renomeadas, dados inalterados:
+- _district_ (77 registros) — colunas A1..A16 renomeadas e tipadas (o `?` de `A12` e `A15` no distrito 69 vira nulo):
    - district_id (era A1), district_name (A2), region (A3), population (A4),
      municipalities_under_499 (A5), municipalities_500_1999 (A6),
      municipalities_2000_9999 (A7), municipalities_over_10000 (A8),
@@ -379,120 +393,132 @@ erDiagram
 ```
 ### Camada Gold
 
-A camada Gold consolida os dados tratados na Silver em estruturas orientadas ao consumo analítico e à geração de features para modelos de aprendizado supervisionado. Nesta etapa, os dados são organizados em duas tabelas com diferentes granularidades: uma visão consolidada do cliente e uma visão temporal do seu comportamento financeiro.
+A camada Gold consolida os dados tratados na Silver em estruturas orientadas ao consumo analítico e à geração de features para modelos de aprendizado supervisionado. Os dados são organizados em duas tabelas com granularidades diferentes, ambas com **`account_id` como entidade**: uma visão cadastral da conta e uma visão temporal do seu comportamento financeiro.
 
-A Gold não define os modelos de ML nem seus conjuntos de treinamento. Seu objetivo é disponibilizar dados confiáveis, reutilizáveis e temporalmente consistentes para que diferentes times possam construir suas próprias features, visões analíticas e modelos.
+**Por que a conta e não o cliente?** O Berka tem 5.369 clientes para 4.500 contas. Os 869 dependentes compartilham a conta do titular e, portanto, a mesma série de transações e o mesmo target. Usá-los como entidade duplicaria observações idênticas e enviesaria as métricas dos modelos. Os atributos do cliente que interessam (sexo e nascimento do titular, cartão) entram como atributos da conta.
 
-#### `gold_client`
+A Gold não define os modelos de ML nem seus conjuntos de treinamento. Seu objetivo é disponibilizar dados confiáveis, reutilizáveis e temporalmente consistentes para que diferentes times possam construir suas próprias features, visões analíticas e modelos. O código está em `src/the_bank_project/gold/` (`make gold`) e as tabelas são gravadas em `data/gold/`.
 
-A tabela `gold_client` consolida as informações cadastrais, demográficas e financeiras em uma visão única para cada cliente, com granularidade de um registro por `client_id`. A tabela reúne atributos do cliente, distrito de residência, relacionamento com a conta, cartão e características do empréstimo, quando existentes.
+#### `gold_account`
+
+Uma linha por `account_id` (4.500 registros). Reúne a conta, o distrito da conta, o titular, o cartão e o empréstimo, quando existentes. `account_open_date` é o timestamp da tabela para o Feature Store.
 
 | Campo                             | Fonte Silver                      | Tipo    | Descrição                                                                                             |
 | --------------------------------- | --------------------------------- | ------- | ----------------------------------------------------------------------------------------------------- |
-| `client_id`                       | `client.client_id`                | string  | Identificador único do cliente. **PK**                                                                |
-| `account_id`                      | `client.account_id`               | string  | Identificador da conta associada ao cliente.                                                          |
-| `relationship_type`               | `client.relationship_type`        | string  | Papel do cliente na conta: `TITULAR` ou `DEPENDENTE`.                                                 |
-| `gender`                          | `client.gender`                   | string  | Sexo do cliente, derivado de `birth_number`.                                                          |
-| `birth_date`                      | `client.birth_date`               | date    | Data de nascimento do cliente.                                                                        |
-| `district_id`                     | `client.district_id`              | string  | Identificador do distrito de residência.                                                              |
-| `district_name`                   | `district.district_name`          | string  | Nome do distrito de residência.                                                                       |
+| `account_id`                      | `account.account_id`              | string  | Identificador único da conta. **PK**                                                                  |
+| `account_open_date`               | `account.date`                    | date    | Data de criação da conta. **Timestamp do Feast.**                                                     |
+| `account_frequency`               | `account.frequency`               | string  | Frequência de emissão do extrato: `MENSAL`, `SEMANAL` ou `POR_TRANSACAO`.                             |
+| `district_id`                     | `account.district_id`             | string  | Distrito da conta.                                                                                    |
+| `district_name`                   | `district.district_name`          | string  | Nome do distrito da conta.                                                                            |
 | `district_region`                 | `district.region`                 | string  | Região do distrito.                                                                                   |
 | `district_population`             | `district.population`             | int     | População do distrito.                                                                                |
 | `district_urban_ratio`            | `district.urban_population_ratio` | float   | Proporção da população urbana do distrito.                                                            |
 | `district_average_salary`         | `district.average_salary`         | int     | Salário médio do distrito.                                                                            |
-| `district_unemployment_1995`      | `district.unemployment_rate_1995` | float   | Taxa de desemprego do distrito em 1995.                                                               |
-| `district_unemployment_1996`      | `district.unemployment_rate_1996` | float   | Taxa de desemprego do distrito em 1996.                                                               |
+| `district_unemployment_1995`      | `district.unemployment_rate_1995` | float   | Taxa de desemprego em 1995 (nula no distrito 69, sem dado na origem).                                 |
+| `district_unemployment_1996`      | `district.unemployment_rate_1996` | float   | Taxa de desemprego em 1996.                                                                           |
 | `district_entrepreneurs_per_1000` | `district.entrepreneurs_per_1000` | int     | Número de empreendedores por 1000 habitantes.                                                         |
-| `district_crimes_1995`            | `district.crimes_1995`            | int     | Número de crimes registrados em 1995.                                                                 |
-| `district_crimes_1996`            | `district.crimes_1996`            | int     | Número de crimes registrados em 1996.                                                                 |
-| `account_district_id`             | `account.district_id`             | string  | Identificador do distrito da conta.                                                                   |
-| `account_frequency`               | `account.frequency`               | string  | Frequência de emissão do extrato.                                                                     |
-| `account_open_date`               | `account.date`                    | date    | Data de criação da conta.                                                                             |
-| `has_card`                        | Derivado de `client.card_id`      | boolean | Indica se o cliente possui cartão.                                                                    |
-| `card_type`                       | `client.card_type`                | string  | Tipo do cartão: `junior`, `classic` ou `gold`.                                                        |
-| `card_issued_date`                | `client.card_issued`              | date    | Data de emissão do cartão.                                                                            |
-| `has_loan`                        | Derivado de `account.loan_id`     | boolean | Indica se a conta possui empréstimo.                                                                  |
+| `district_crimes_1995`            | `district.crimes_1995`            | int     | Crimes registrados em 1995 (nulo no distrito 69).                                                     |
+| `district_crimes_1996`            | `district.crimes_1996`            | int     | Crimes registrados em 1996.                                                                           |
+| `owner_client_id`                 | `client.client_id`                | string  | Cliente titular da conta.                                                                             |
+| `owner_gender`                    | `client.gender`                   | string  | Sexo do titular (`M`/`F`).                                                                            |
+| `owner_birth_date`                | `client.birth_date`               | date    | Data de nascimento do titular.                                                                        |
+| `owner_district_id`               | `client.district_id`              | string  | Distrito de residência do titular (difere do da conta em 409 contas).                                 |
+| `dependent_count`                 | Derivado de `client`              | int     | Número de dependentes da conta (0 ou 1 no dataset).                                                   |
+| `has_card`                        | Derivado de `client.card_id`      | boolean | Indica se a conta tem cartão (só o titular pode ter).                                                 |
+| `card_type`                       | `client.card_type`                | string  | Tipo do cartão: `junior`, `classic` ou `gold`. Nulo sem cartão.                                       |
+| `card_issued_date`                | `client.card_issued`              | date    | Data de emissão do cartão. Nulo sem cartão.                                                           |
+| `has_loan`                        | Derivado de `account.loan_id`     | boolean | Indica se a conta tem empréstimo.                                                                     |
 | `loan_date`                       | `account.loan_date`               | date    | Data de concessão do empréstimo.                                                                      |
-| `loan_amount`                     | `account.loan_amount`             | decimal | Valor concedido no empréstimo.                                                                        |
+| `loan_amount`                     | `account.loan_amount`             | float   | Valor concedido no empréstimo.                                                                        |
 | `loan_duration`                   | `account.loan_duration`           | int     | Duração do empréstimo em meses.                                                                       |
-| `loan_payments`                   | `account.loan_payments`           | decimal | Valor da parcela mensal.                                                                              |
-| `loan_payment_ratio`              | Derivado                          | decimal | Relação entre o pagamento mensal e o valor do empréstimo.                                             |
-| `loan_status`                     | `account.loan_status`             | string  | Situação observada do empréstimo. Utilizado como origem do label de inadimplência e não como feature. |
+| `loan_payments`                   | `account.loan_payments`           | float   | Valor da parcela mensal.                                                                              |
+| `loan_payment_ratio`              | Derivado                          | float   | Relação entre a parcela mensal e o valor do empréstimo.                                               |
+| `loan_status`                     | `account.loan_status`             | string  | Situação do empréstimo (`A`–`D`). Origem do label de inadimplência, **não é feature**.                |
 
-Os atributos de cliente e cartão são provenientes da consolidação de `client`, `disp` e `card`, enquanto os atributos de empréstimo são provenientes da consolidação de `account` e `loan`.
+> **Atenção ao usar os campos `card_*` e `loan_*`:** são atributos estáticos, medidos ao fim do período, e a tabela é datada pela abertura da conta. Um cartão ou empréstimo emitido depois do mês de referência de uma observação **não** estava disponível naquele momento; ao montar datasets de treino, só use esses campos quando `card_issued_date`/`loan_date` forem anteriores ao mês da observação.
 
-#### `gold_client_monthly_movements`
+#### `gold_account_monthly_movements`
 
-A tabela `gold_client_monthly_movements` representa o comportamento financeiro dos clientes ao longo do tempo, com granularidade de um registro por `client_id` e mês de referência. As movimentações são agregadas a partir das transações associadas à conta do cliente, gerando indicadores de volume, entradas, saídas, saldo, composição das operações e comportamento histórico.
+Uma linha por `account_id` e `reference_month`, agregada de `trans` (1.056.320 transações → 185.326 registros mensais, cobrindo as 4.500 contas entre 1993-01 e 1998-12). Os indicadores cobrem volume, entradas, saídas, saldo, composição das operações e histórico.
 
-A tabela de origem `_trans_` possui 1.056.320 registros, que são transformados em uma série temporal mensal nesta etapa. A tabela pode contemplar até os 5.369 clientes disponíveis no Silver, enquanto a quantidade final de registros dependerá dos meses em que cada cliente apresentou movimentações.
+- **`reference_month` é o último dia do mês** (ex.: `1995-03-31`), quando as features do mês ficam completas. É o `event_timestamp` no Feast: uma consulta point-in-time feita em `T` só enxerga meses já encerrados.
+- **Meses sem movimento entram na série**, entre o primeiro e o último mês com transação de cada conta (269 meses, 0,15%), com fluxos e contagens 0 e saldo carregado do mês anterior. Sem isso, `LAG` e as médias móveis olhariam para meses distantes. Os valores mínimo/médio/máximo das transações ficam nulos nesses meses.
+- **Entradas** são as transações do tipo `CREDITO`; **saídas** são `DEBITO` e `SAQUE` (o `VYBER` do tipo, variante legada de débito).
+- **`opening_balance` é uma estimativa.** O `balance` do Berka não fecha como razão contábil (`closing_balance ≠ opening_balance + net_flow` em cerca de 25% dos meses) e o `trans_id` não segue a ordem real dentro do mesmo dia. Por isso, o saldo de abertura/fechamento do dia é resolvido pela cadeia `balance − valor` das próprias transações do dia, e não pelo `trans_id`.
+- Janelas (`*_3m_*`, `*_6m_*`) usam **só o mês de referência e os anteriores**; onde há menos meses que a janela, usam os disponíveis. Variações percentuais são nulas quando o mês anterior é 0 (indefinidas, não infinitas).
+- `leasing_payment_amount`, previsto no desenho original, foi removido: `LEASING` só aparece em `order`, nunca em `trans`.
 
-| Campo                          | Fonte                        | Descrição                                                    |
-| ------------------------------ | ---------------------------- | ------------------------------------------------------------ |
-| `client_id`                    | `client.client_id`           | Identificador do cliente. **PK composta**                    |
-| `account_id`                   | `client.account_id`          | Identificador da conta associada ao cliente.                 |
-| `reference_month`              | Derivado de `trans.date`     | Mês de referência da agregação. **PK composta**              |
-| `account_age_months`           | Derivado                     | Idade da conta em meses no período.                          |
-| `year`                         | Derivado                     | Ano da movimentação.                                         |
-| `month`                        | Derivado                     | Mês da movimentação.                                         |
-| `transaction_count`            | `COUNT(trans_id)`            | Número total de transações no mês.                           |
-| `active_days`                  | `COUNT(DISTINCT date)`       | Número de dias com movimentação.                             |
-| `credit_transaction_count`     | `type`                       | Quantidade de transações de crédito.                         |
-| `debit_transaction_count`      | `type`                       | Quantidade de transações de débito ou saída.                 |
-| `withdrawal_transaction_count` | `operation`                  | Quantidade de saques.                                        |
-| `transfer_transaction_count`   | `operation`                  | Quantidade de transferências.                                |
-| `inflow_amount`                | `type = PRIJEM`              | Total de recursos recebidos no mês.                          |
-| `outflow_amount`               | `type IN (VYDAJ, VYBER)`     | Total de recursos debitados no mês.                          |
-| `net_flow`                     | Derivado                     | Diferença entre entradas e saídas.                           |
-| `avg_transaction_amount`       | `amount`                     | Valor médio das transações.                                  |
-| `min_transaction_amount`       | `amount`                     | Menor valor de transação.                                    |
-| `max_transaction_amount`       | `amount`                     | Maior valor de transação.                                    |
-| `opening_balance`              | Derivado de `balance`        | Saldo estimado no início do período.                         |
-| `closing_balance`              | Derivado de `balance`        | Saldo observado após a última transação do mês.              |
-| `avg_balance`                  | `AVG(balance)`               | Saldo médio observado no mês.                                |
-| `min_balance`                  | `MIN(balance)`               | Menor saldo observado no mês.                                |
-| `max_balance`                  | `MAX(balance)`               | Maior saldo observado no mês.                                |
-| `cash_withdrawal_amount`       | `operation = VYBER`          | Valor total de saques em dinheiro.                           |
-| `card_withdrawal_amount`       | `operation = VYBER KARTOU`   | Valor total de saques com cartão.                            |
-| `transfer_out_amount`          | `operation = PREVOD NA UCET` | Valor total de transferências enviadas.                      |
-| `transfer_in_amount`           | `operation = PREVOD Z UCTU`  | Valor total de transferências recebidas.                     |
-| `loan_payment_amount`          | `k_symbol = UVER`            | Valor total de pagamentos de empréstimos.                    |
-| `insurance_payment_amount`     | `k_symbol = POJISTNE`        | Valor total de pagamentos de seguros.                        |
-| `domestic_payment_amount`      | `k_symbol = SIPO`            | Valor total de pagamentos domésticos.                        |
-| `leasing_payment_amount`       | `k_symbol = LEASING`         | Valor total de pagamentos de leasing.                        |
-| `interest_amount`              | `k_symbol = UROK`            | Valor associado a juros.                                     |
-| `penalty_interest_amount`      | `k_symbol = SANKC. UROK`     | Valor associado a juros de penalidade.                       |
-| `loan_payment_count`           | `k_symbol = UVER`            | Quantidade de pagamentos de empréstimos.                     |
-| `transfer_out_count`           | `operation`                  | Quantidade de transferências enviadas.                       |
-| `transfer_in_count`            | `operation`                  | Quantidade de transferências recebidas.                      |
-| `cash_withdrawal_count`        | `operation`                  | Quantidade de saques em dinheiro.                            |
-| `card_withdrawal_count`        | `operation`                  | Quantidade de saques com cartão.                             |
-| `previous_month_outflow`       | `LAG(outflow_amount)`        | Total de saídas do mês anterior.                             |
-| `previous_month_inflow`        | `LAG(inflow_amount)`         | Total de entradas do mês anterior.                           |
-| `outflow_3m_avg`               | Média móvel                  | Média das saídas dos últimos 3 meses.                        |
-| `outflow_3m_sum`               | Soma móvel                   | Soma das saídas dos últimos 3 meses.                         |
-| `outflow_6m_avg`               | Média móvel                  | Média das saídas dos últimos 6 meses.                        |
-| `inflow_3m_avg`                | Média móvel                  | Média das entradas dos últimos 3 meses.                      |
-| `avg_balance_3m`               | Média móvel                  | Saldo médio observado nos últimos 3 meses.                   |
-| `transaction_count_3m_avg`     | Média móvel                  | Média da quantidade de transações dos últimos 3 meses.       |
-| `outflow_mom_change`           | Derivado                     | Variação percentual das saídas em relação ao mês anterior.   |
-| `inflow_mom_change`            | Derivado                     | Variação percentual das entradas em relação ao mês anterior. |
-| `balance_mom_change`           | Derivado                     | Variação do saldo em relação ao mês anterior.                |
+| Campo                          | Fonte                                   | Descrição                                                    |
+| ------------------------------ | --------------------------------------- | ------------------------------------------------------------ |
+| `account_id`                   | `trans.account_id`                      | Identificador da conta. **PK composta**                      |
+| `reference_month`              | Derivado de `trans.date`                | Último dia do mês de referência. **PK composta, timestamp do Feast** |
+| `account_age_months`           | Derivado                                | Idade da conta, em meses, no mês de referência.              |
+| `year`                         | Derivado                                | Ano do mês de referência.                                    |
+| `month`                        | Derivado                                | Mês do mês de referência.                                    |
+| `transaction_count`            | `COUNT(trans_id)`                       | Número total de transações no mês.                           |
+| `active_days`                  | `COUNT(DISTINCT date)`                  | Número de dias com movimentação.                             |
+| `credit_transaction_count`     | `type = CREDITO`                        | Quantidade de transações de crédito.                         |
+| `debit_transaction_count`      | `type IN (DEBITO, SAQUE)`               | Quantidade de transações de saída.                           |
+| `withdrawal_transaction_count` | `operation IN (SAQUE_DINHEIRO, SAQUE_CARTAO)` | Quantidade de saques.                                  |
+| `transfer_transaction_count`   | `operation IN (TRANSFERENCIA_*)`        | Quantidade de transferências (enviadas e recebidas).         |
+| `inflow_amount`                | `type = CREDITO`                        | Total de recursos recebidos no mês.                          |
+| `outflow_amount`               | `type IN (DEBITO, SAQUE)`               | Total de recursos debitados no mês.                          |
+| `net_flow`                     | Derivado                                | Entradas menos saídas.                                       |
+| `avg_transaction_amount`       | `amount`                                | Valor médio das transações.                                  |
+| `min_transaction_amount`       | `amount`                                | Menor valor de transação.                                    |
+| `max_transaction_amount`       | `amount`                                | Maior valor de transação.                                    |
+| `opening_balance`              | Derivado de `balance`                   | Saldo estimado antes da primeira transação do mês.           |
+| `closing_balance`              | Derivado de `balance`                   | Saldo após a última transação do mês.                        |
+| `avg_balance`                  | `AVG(balance)`                          | Saldo médio observado nas transações do mês.                 |
+| `min_balance`                  | `MIN(balance)`                          | Menor saldo observado no mês.                                |
+| `max_balance`                  | `MAX(balance)`                          | Maior saldo observado no mês.                                |
+| `cash_withdrawal_amount`       | `operation = SAQUE_DINHEIRO`            | Valor total de saques em dinheiro.                           |
+| `card_withdrawal_amount`       | `operation = SAQUE_CARTAO`              | Valor total de saques com cartão.                            |
+| `transfer_out_amount`          | `operation = TRANSFERENCIA_ENVIADA`     | Valor total de transferências enviadas.                      |
+| `transfer_in_amount`           | `operation = TRANSFERENCIA_RECEBIDA`    | Valor total de transferências recebidas.                     |
+| `loan_payment_amount`          | `k_symbol = PAGAMENTO_EMPRESTIMO`       | Valor total de pagamentos de empréstimos.                    |
+| `insurance_payment_amount`     | `k_symbol = SEGURO`                     | Valor total de pagamentos de seguros.                        |
+| `domestic_payment_amount`      | `k_symbol = PAGAMENTO_DOMESTICO`        | Valor total de pagamentos domésticos.                        |
+| `interest_amount`              | `k_symbol = JUROS`                      | Valor associado a juros.                                     |
+| `penalty_interest_amount`      | `k_symbol = JUROS_PENALIDADE`           | Valor associado a juros de penalidade.                       |
+| `loan_payment_count`           | `k_symbol = PAGAMENTO_EMPRESTIMO`       | Quantidade de pagamentos de empréstimos.                     |
+| `transfer_out_count`           | `operation`                             | Quantidade de transferências enviadas.                       |
+| `transfer_in_count`            | `operation`                             | Quantidade de transferências recebidas.                      |
+| `cash_withdrawal_count`        | `operation`                             | Quantidade de saques em dinheiro.                            |
+| `card_withdrawal_count`        | `operation`                             | Quantidade de saques com cartão.                             |
+| `previous_month_outflow`       | `LAG(outflow_amount)`                   | Total de saídas do mês anterior.                             |
+| `previous_month_inflow`        | `LAG(inflow_amount)`                    | Total de entradas do mês anterior.                           |
+| `outflow_3m_avg`               | Média móvel                             | Média das saídas dos últimos 3 meses (incluindo o atual).    |
+| `outflow_3m_sum`               | Soma móvel                              | Soma das saídas dos últimos 3 meses.                         |
+| `outflow_6m_avg`               | Média móvel                             | Média das saídas dos últimos 6 meses.                        |
+| `inflow_3m_avg`                | Média móvel                             | Média das entradas dos últimos 3 meses.                      |
+| `avg_balance_3m`               | Média móvel                             | Média do saldo médio dos últimos 3 meses.                    |
+| `transaction_count_3m_avg`     | Média móvel                             | Média da quantidade de transações dos últimos 3 meses.       |
+| `outflow_mom_change`           | Derivado                                | Variação percentual das saídas em relação ao mês anterior.   |
+| `inflow_mom_change`            | Derivado                                | Variação percentual das entradas em relação ao mês anterior. |
+| `balance_mom_change`           | Derivado                                | Variação absoluta do saldo de fechamento em relação ao mês anterior. |
 
-Os campos derivados da janela temporal devem ser calculados utilizando apenas informações disponíveis até o mês de referência, evitando que dados futuros sejam incorporados às features.
+#### Validações automáticas
+
+`check_gold` roda a cada execução e, se qualquer regra falhar, nada é gravado:
+- PK única em cada tabela e `gold_account` com exatamente as contas da Silver;
+- sem nulos nos campos obrigatórios (chaves, datas, fluxos, saldos e janelas);
+- toda conta da tabela mensal existe em `gold_account`;
+- meses contíguos por conta e `reference_month` sempre no fim do mês;
+- consistência das janelas: `outflow_3m_sum` não é menor que a saída do mês e `previous_month_outflow` bate com o mês anterior.
+
+Os testes garantem ainda que alterar um mês futuro não muda nenhuma feature dos meses anteriores (anti-vazamento).
 
 #### Diagrama Entidade-Relacionamento
 
 ```mermaid
 erDiagram
-    GOLD_CLIENT ||--o{ GOLD_CLIENT_MONTHLY_MOVEMENTS : "possui histórico mensal"
+    GOLD_ACCOUNT ||--o{ GOLD_ACCOUNT_MONTHLY_MOVEMENTS : "possui histórico mensal"
 
-    GOLD_CLIENT {
-        string client_id PK
-        string account_id
-        string relationship_type
-        string gender
-        date birth_date
+    GOLD_ACCOUNT {
+        string account_id PK
+        date account_open_date
+        string account_frequency
         string district_id
         string district_name
         string district_region
@@ -504,24 +530,25 @@ erDiagram
         int district_entrepreneurs_per_1000
         int district_crimes_1995
         int district_crimes_1996
-        string account_district_id
-        string account_frequency
-        date account_open_date
+        string owner_client_id
+        string owner_gender
+        date owner_birth_date
+        string owner_district_id
+        int dependent_count
         boolean has_card
         string card_type
         date card_issued_date
         boolean has_loan
         date loan_date
-        decimal loan_amount
+        float loan_amount
         int loan_duration
-        decimal loan_payments
-        decimal loan_payment_ratio
+        float loan_payments
+        float loan_payment_ratio
         string loan_status
     }
 
-    GOLD_CLIENT_MONTHLY_MOVEMENTS {
-        string client_id PK
-        string account_id
+    GOLD_ACCOUNT_MONTHLY_MOVEMENTS {
+        string account_id PK
         date reference_month PK
         int account_age_months
         int year
@@ -532,43 +559,42 @@ erDiagram
         int debit_transaction_count
         int withdrawal_transaction_count
         int transfer_transaction_count
-        decimal inflow_amount
-        decimal outflow_amount
-        decimal net_flow
-        decimal avg_transaction_amount
-        decimal min_transaction_amount
-        decimal max_transaction_amount
-        decimal opening_balance
-        decimal closing_balance
-        decimal avg_balance
-        decimal min_balance
-        decimal max_balance
-        decimal cash_withdrawal_amount
-        decimal card_withdrawal_amount
-        decimal transfer_out_amount
-        decimal transfer_in_amount
-        decimal loan_payment_amount
-        decimal insurance_payment_amount
-        decimal domestic_payment_amount
-        decimal leasing_payment_amount
-        decimal interest_amount
-        decimal penalty_interest_amount
+        float inflow_amount
+        float outflow_amount
+        float net_flow
+        float avg_transaction_amount
+        float min_transaction_amount
+        float max_transaction_amount
+        float opening_balance
+        float closing_balance
+        float avg_balance
+        float min_balance
+        float max_balance
+        float cash_withdrawal_amount
+        float card_withdrawal_amount
+        float transfer_out_amount
+        float transfer_in_amount
+        float loan_payment_amount
+        float insurance_payment_amount
+        float domestic_payment_amount
+        float interest_amount
+        float penalty_interest_amount
         int loan_payment_count
         int transfer_out_count
         int transfer_in_count
         int cash_withdrawal_count
         int card_withdrawal_count
-        decimal previous_month_outflow
-        decimal previous_month_inflow
-        decimal outflow_3m_avg
-        decimal outflow_3m_sum
-        decimal outflow_6m_avg
-        decimal inflow_3m_avg
-        decimal avg_balance_3m
-        decimal transaction_count_3m_avg
-        decimal outflow_mom_change
-        decimal inflow_mom_change
-        decimal balance_mom_change
+        float previous_month_outflow
+        float previous_month_inflow
+        float outflow_3m_avg
+        float outflow_3m_sum
+        float outflow_6m_avg
+        float inflow_3m_avg
+        float avg_balance_3m
+        float transaction_count_3m_avg
+        float outflow_mom_change
+        float inflow_mom_change
+        float balance_mom_change
     }
 ```
 
@@ -580,7 +606,7 @@ Essa separação permite reutilizar a mesma Gold em diferentes modelos e evita q
 
 ### Modelo de regressão | Gastos do próximo mês
 
-O objetivo deste modelo é prever o valor total de saídas de um cliente no mês seguinte.
+O objetivo deste modelo é prever o valor total de saídas de uma conta no mês seguinte.
 
 Matematicamente:
 
@@ -592,7 +618,7 @@ Onde:
 
 ```text
 X(T) = comportamento observado até o mês T
-y(T+1) = outflow do cliente no mês T+1
+y(T+1) = outflow da conta no mês T+1
 ```
 
 **Variável alvo:**
@@ -601,15 +627,15 @@ y(T+1) = outflow do cliente no mês T+1
 next_month_outflow = outflow_amount(T+1)
 ```
 
-A variável `next_month_outflow` não faz parte da Gold nem do conjunto de features disponibilizado no Feature Store. Ela é construída durante a preparação do dataset de treinamento, deslocando `outflow_amount` para o mês seguinte.
+A variável `next_month_outflow` não faz parte da Gold nem do conjunto de features disponibilizado no Feature Store. Ela é construída durante a preparação do dataset de treinamento, deslocando `outflow_amount` para o mês seguinte dentro de cada conta.
 
 **Granularidade:**
 
 ```text
-1 observação = 1 cliente por mês
+1 observação = 1 conta por mês
 ```
 
-A tabela de origem possui 1.056.320 transações, que são agregadas em registros mensais por cliente. A quantidade final de observações do modelo será determinada após essa agregação e depende da existência de movimentações em cada período.
+A Gold tem 185.326 registros mensais (1.056.320 transações agregadas por conta). O último mês de cada conta não tem mês seguinte e, portanto, não gera observação de treino; o número final de observações será definido na preparação do dataset.
 
 **Modelos:**
 
@@ -658,7 +684,6 @@ transfer_out_amount
 loan_payment_amount
 insurance_payment_amount
 domestic_payment_amount
-leasing_payment_amount
 ```
 
 **Histórico:**

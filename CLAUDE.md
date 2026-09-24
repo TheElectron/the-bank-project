@@ -9,13 +9,13 @@ Fonte da verdade — não duplicar aqui:
 - `README.md`: schema dos dados, Silver, Gold, modelos.
 - `ROADMAP.md`: fases e status. **Checar antes de assumir que algo existe.**
 
-Entidade do projeto: `account_id` (decisão de 2026-09-23, ver Fase 3 do ROADMAP).
-O README ainda descreve a Gold por `client_id` até a Fase 3 atualizá-lo.
+Entidade do projeto: `account_id` (decisão de 2026-09-23, ver Fase 3 do ROADMAP);
+a Gold (`gold_account`, `gold_account_monthly_movements`) já segue essa entidade.
 
 # Comandos
 
 Interface via Makefile (`make help`): `install`, `lint`, `format`, `typecheck`,
-`test`, `check` (= o que o CI roda), `hooks`, `ingest` (Kaggle → Raw → Bronze), `silver` (Bronze → Silver),
+`test`, `check` (= o que o CI roda), `hooks`, `ingest` (Kaggle → Raw → Bronze), `silver` (Bronze → Silver), `gold` (Silver → Gold),
 `up`/`down` (Airflow em Docker, UI em localhost:8080), `dag-check` (valida as DAGs
 na imagem do Airflow), `clean`.
 
@@ -25,7 +25,9 @@ na imagem do Airflow), `clean`.
 - Type hints obrigatórios (mypy com `disallow_untyped_defs`); docstrings no formato Google.
 - Config em `configs/*.yaml` validada via Pydantic (`the_bank_project.config`); segredos em `.env` (modelo em `.env.example`). Nada de paths hardcoded.
 - Um step de pipeline = função pura + CLI, testável sem Airflow; DAGs só envolvem o código do pacote.
-- Airflow roda só em imagem Docker própria (`docker/airflow/`), fora do `pyproject.toml`.
+- Airflow roda só em imagem Docker própria (`docker/airflow/`), fora do `pyproject.toml`. O código do projeto
+  roda num venv da imagem (`@task.external_python`) instalado a partir do `pyproject.toml`, não no ambiente do
+  Airflow (cujos constraints fixam pandas 2.1/numpy 1.26). O decorator deve aparecer por extenso em cada task.
 - Nome de experimento/run no MLflow: `<etapa>_<modelo>_<data>`.
 - Reutilizar bibliotecas reconhecidas em vez de reimplementar.
 
