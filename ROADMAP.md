@@ -13,7 +13,7 @@ Legenda: ⬜ não iniciada · 🚧 em andamento · ✅ concluída
 | 1b   | Airflow (imagem própria + compose) e DAG de ingestão            | 2                   | ✅     |
 | 2    | Bronze → Silver                                                 | 3                   | ✅     |
 | 3    | Silver → Gold                                                   | 3                   | ✅     |
-| 4    | Feature Store (Feast)                                           | 4                   | ⬜     |
+| 4    | Feature Store (Feast)                                           | 4                   | ✅     |
 | 5    | Treino, validação e ciclo de vida dos modelos (MLflow)          | 5                   | ⬜     |
 | 6    | Inferência via API (FastAPI + Docker)                           | 6                   | ⬜     |
 | 7    | Monitoramento e re-treino por drift                             | 7                   | ⬜     |
@@ -156,6 +156,15 @@ O README foi atualizado junto (seção "Camada Gold").
 - `feast apply` e `feast materialize` como tasks da DAG.
 - Único ponto de acesso às features para treino e serving (nenhum outro
   módulo lê a Gold diretamente).
+
+Implementado em `feature_repo/` (definições e `feature_store.yaml`) e
+`src/the_bank_project/features/` (`store.py`, CLI `make features`); tasks
+`feast_apply` e `feast_materialize` no fim da DAG. Decisões: Feast exige
+`pandas<3`, então o projeto todo foi fixado em pandas 2.3 (2026-09-24); views sem
+TTL (o offline store de arquivos descarta/quebra com TTL); materialização
+completa em vez de incremental (dataset histórico). Só o FeatureService da
+regressão existe; o da inadimplência vem com o modelo (Fase 5), e `card_*`/`loan_*`
+precisam ser mascarados pela própria data antes de virar feature.
 
 ## Fase 5 — Treino, validação e ciclo de vida (MLflow)
 

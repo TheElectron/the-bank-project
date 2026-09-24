@@ -1,0 +1,11 @@
+# Repositório Feast local (Fase 4). Caminhos relativos partem desta pasta.
+# Offline store: parquet da Gold (data/gold/). Online store: SQLite local.
+project: the_bank_project
+provider: local
+registry: data/registry.db
+online_store:
+  type: sqlite
+  path: data/online_store.db
+offline_store:
+  type: file
+entity_key_serialization_version: 3

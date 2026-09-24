@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install lint format typecheck test check hooks ingest silver gold up down dag-check clean
+.PHONY: help install lint format typecheck test check hooks ingest silver gold features up down dag-check clean
 
 help:  ## Lista os comandos
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -34,6 +34,9 @@ silver:  ## Bronze → Silver (tipagem, traduções e checks)
 
 gold:  ## Silver → Gold (features por conta e série mensal)
 	poetry run python -m the_bank_project.gold
+
+features:  ## Feast: apply + materialize (Gold → online store)
+	poetry run python -m the_bank_project.features
 
 up:  ## Sobe o Airflow (UI em http://localhost:8080)
 	AIRFLOW_UID=$$(id -u) docker compose up -d --build

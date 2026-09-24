@@ -128,7 +128,7 @@ def test_check_gold_passes_on_valid_tables(silver: dict[str, pd.DataFrame]):
         (lambda a, m: (a, m.drop(m.index[1])), "não contíguos"),
         (lambda a, m: (a, m.assign(outflow_3m_sum=-1.0)), "outflow_3m_sum"),
         (lambda a, m: (a, m.assign(previous_month_outflow=999.0)), "previous_month_outflow"),
-        (lambda a, m: (a, m.assign(reference_month=m["reference_month"] - pd.Timedelta(days=1))), "fim de mês"),
+        (lambda a, m: (a, m.assign(reference_month=m["reference_month"] - pd.offsets.Day(1))), "fim de mês"),
     ],
 )
 def test_check_gold_detects_violations(silver: dict[str, pd.DataFrame], mutate, message: str):  # type: ignore[no-untyped-def]

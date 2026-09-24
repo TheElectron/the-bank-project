@@ -43,11 +43,22 @@ class KaggleConfig(BaseModel):
     dataset: str
 
 
+class FeastConfig(BaseModel):
+    """Repositório da feature store (Feast)."""
+
+    repo_path: Path = Path("feature_repo")
+
+    @property
+    def repo(self) -> Path:
+        return self.repo_path if self.repo_path.is_absolute() else PROJECT_ROOT / self.repo_path
+
+
 class GlobalConfig(BaseModel):
     """Configuração global, espelho de `configs/global_config.yaml`."""
 
     paths: PathsConfig = PathsConfig()
     kaggle: KaggleConfig
+    feast: FeastConfig = FeastConfig()
 
 
 class Settings(BaseSettings):

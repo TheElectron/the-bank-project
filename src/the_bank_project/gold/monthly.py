@@ -155,5 +155,6 @@ def build_gold_account_monthly(trans: pd.DataFrame, account: pd.DataFrame) -> pd
     df["year"] = df["reference_month"].dt.year
     df["month"] = df["reference_month"].dt.month
     df["account_age_months"] = (df["year"] - opened.dt.year) * 12 + df["month"] - opened.dt.month
+    df[["year", "month", "account_age_months"]] = df[["year", "month", "account_age_months"]].astype("int64")
     first = ["account_id", "reference_month", "account_age_months", "year", "month"]
     return df[[*first, *(c for c in df.columns if c not in first)]]

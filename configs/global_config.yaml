@@ -5,3 +5,6 @@ paths:
 
 kaggle:
   dataset: marceloventura/the-berka-dataset
+
+feast:
+  repo_path: feature_repo   # feature_store.yaml + features.py (Fase 4)

@@ -1,4 +1,4 @@
-"""DAG do pipeline de dados: Kaggle → Raw → Bronze → Silver → Gold. Só orquestra o código do pacote."""
+"""DAG do pipeline de dados: Kaggle → Raw → Bronze → Silver → Gold → Feast. Só orquestra o código do pacote."""
 
 import pendulum
 from airflow.sdk import dag, task
@@ -50,7 +50,19 @@ def data_pipeline() -> None:
         cfg = load_config()
         silver_to_gold(cfg.paths.silver, cfg.paths.gold)
 
-    download() >> to_bronze() >> to_silver() >> to_gold()
+    @task.external_python(python=PROJECT_PYTHON, expect_airflow=False, expect_pendulum=False)
+    def feast_apply() -> None:
+        from the_bank_project.features import apply_repo
+
+        apply_repo()
+
+    @task.external_python(python=PROJECT_PYTHON, expect_airflow=False, expect_pendulum=False)
+    def feast_materialize() -> None:
+        from the_bank_project.features import materialize_all
+
+        materialize_all()
+
+    download() >> to_bronze() >> to_silver() >> to_gold() >> feast_apply() >> feast_materialize()
 
 
 data_pipeline()

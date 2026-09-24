@@ -15,12 +15,14 @@ a Gold (`gold_account`, `gold_account_monthly_movements`) já segue essa entidad
 # Comandos
 
 Interface via Makefile (`make help`): `install`, `lint`, `format`, `typecheck`,
-`test`, `check` (= o que o CI roda), `hooks`, `ingest` (Kaggle → Raw → Bronze), `silver` (Bronze → Silver), `gold` (Silver → Gold),
+`test`, `check` (= o que o CI roda), `hooks`, `ingest` (Kaggle → Raw → Bronze), `silver` (Bronze → Silver), `gold` (Silver → Gold), `features` (Feast apply + materialize),
 `up`/`down` (Airflow em Docker, UI em localhost:8080), `dag-check` (valida as DAGs
 na imagem do Airflow), `clean`.
 
 # Estilo de código
 
+- `pandas<3` é obrigatório (o Feast exige); não atualizar sem checar o Feast. Acesso às features só por
+  `the_bank_project.features`; definições do Feast em `feature_repo/features.py` (schema explícito + teste de contrato).
 - Pacote em `src/the_bank_project/` (layout src); testes espelham o pacote em `tests/`.
 - Type hints obrigatórios (mypy com `disallow_untyped_defs`); docstrings no formato Google.
 - Config em `configs/*.yaml` validada via Pydantic (`the_bank_project.config`); segredos em `.env` (modelo em `.env.example`). Nada de paths hardcoded.

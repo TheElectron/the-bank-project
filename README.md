@@ -7,17 +7,18 @@ O projeto está baseado em 3 etapas.
 
 ## Pipeline de dados
 
-Kaggle → Raw → Bronze → Silver → Gold, orquestrado por uma DAG do Airflow (`data_pipeline`) que só chama o código do pacote `the_bank_project`. Cada etapa também roda sozinha, pelo Makefile:
+Kaggle → Raw → Bronze → Silver → Gold → Feast, orquestrado por uma DAG do Airflow (`data_pipeline`) que só chama o código do pacote `the_bank_project`. Cada etapa também roda sozinha, pelo Makefile:
 
 | Comando          | Etapa                                                                 |
 | ---------------- | --------------------------------------------------------------------- |
 | `make ingest`    | Kaggle → Raw (`.csv`) → Bronze (`.parquet`, cópia 1:1)                |
 | `make silver`    | Bronze → Silver (tipagem, nulos, traduções, 8 → 5 tabelas, checks)    |
 | `make gold`      | Silver → Gold (`gold_account` e `gold_account_monthly_movements`)     |
+| `make features`  | Feast: registra as views (`apply`) e carrega o online store (`materialize`)  |
 | `make up`/`down` | Sobe/derruba o Airflow em Docker (UI em http://localhost:8080)        |
 | `make check`     | Lint, type check e testes (o mesmo que o CI roda)                     |
 
-As credenciais do Kaggle vão em `.env` (modelo em `.env.example`). Os dados ficam em `data/{raw,bronze,silver,gold}/`, fora do git. Todas as etapas são idempotentes: reexecutar sobrescreve o resultado sem duplicar nada. Feature store (Feast), treino, serving e monitoramento ainda não foram implementados; ver `ROADMAP.md`.
+As credenciais do Kaggle vão em `.env` (modelo em `.env.example`). Os dados ficam em `data/{raw,bronze,silver,gold}/`, fora do git. Todas as etapas são idempotentes: reexecutar sobrescreve o resultado sem duplicar nada. Treino, serving e monitoramento ainda não foram implementados; ver `ROADMAP.md`.
 
 ## Dados
 
@@ -597,6 +598,30 @@ erDiagram
         float balance_mom_change
     }
 ```
+
+## Feature Store (Feast)
+
+A Gold é servida pelo Feast (`feature_repo/`), que é o **único ponto de acesso às features**: treino e serving passam por `the_bank_project.features`, e nenhum outro módulo lê a Gold diretamente.
+
+- **Entidade:** `account` (chave `account_id`).
+- **Offline store:** os parquets de `data/gold/` (usado no treino, com join *point-in-time*). **Online store:** SQLite local em `feature_repo/data/` (usado no serving), carregado com o valor mais recente de cada conta.
+- **Views:** `account_static` (de `gold_account`, timestamp `account_open_date`) e `account_monthly` (de `gold_account_monthly_movements`, timestamp `reference_month`). O schema é explícito em `feature_repo/features.py` e um teste de contrato falha se ele divergir das colunas da Gold.
+- **FeatureService `outflow_regression`:** as features da visão mensal e do histórico usadas pelo modelo de regressão (ver "Modelos Supervisionados"). O target não é uma feature.
+
+```python
+from the_bank_project.features import get_offline_features, get_online_features
+
+# treino: uma linha por (conta, instante); volta o que era conhecido naquele instante
+train = get_offline_features(entity_df)  # colunas: account_id, event_timestamp
+# serving: o mês mais recente de cada conta
+live = get_online_features(["1", "2"])
+```
+
+Pontos de atenção:
+- **Point-in-time:** como `reference_month` é o fim do mês, uma consulta em `1995-03-30` enxerga fevereiro, não março (há teste para isso).
+- **Sem TTL:** o offline store de arquivos do Feast descarta a linha inteira quando a feature expira, e quebra se todas expirarem. Por isso as views não têm TTL, e o dataset de treino deve partir de pares (conta, mês) reais da Gold, não de datas arbitrárias depois do último mês da conta. Linhas anteriores à abertura da conta não voltam do offline store.
+- **Materialização completa:** `materialize_all` reprocessa o histórico inteiro (idempotente). A janela incremental do Feast é limitada pelo TTL a partir de "agora", e o dataset é de 1993–1998.
+- **Versão do pandas:** o Feast exige `pandas<3`, então o projeto todo está em pandas 2.3 (dev, CI e a imagem do Airflow).
 
 ## Modelos Supervisionados
 

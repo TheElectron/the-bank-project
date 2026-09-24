@@ -1,4 +1,4 @@
-# Infra local (100% Docker). Cresce a cada fase; hoje só o Airflow (Fase 1b).
+# Infra local (100% Docker). Cresce a cada fase; hoje só o Airflow (Fase 1b; roda também o Feast, Fase 4).
 x-airflow-common: &airflow-common
   build:
     context: .
@@ -24,6 +24,7 @@ x-airflow-common: &airflow-common
     - ./configs:/opt/airflow/configs
     - ./scripts:/opt/airflow/scripts
     - ./data:/opt/airflow/data
+    - ./feature_repo:/opt/airflow/feature_repo
     - airflow-logs:/opt/airflow/logs
   depends_on: &airflow-depends
     postgres:
