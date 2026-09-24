@@ -1,0 +1,47 @@
+# Ambiente Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+
+# Caches de tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+
+# Dados (data lake Medallion) — só a estrutura de pastas é versionada
+data/**
+!data/**/
+!data/**/.gitkeep
+
+# Segredos — nunca versionar (.env.example, o template, é versionado)
+.env
+.env.*
+!.env.example
+kaggle.json
+
+# MLflow / Feast / bancos locais
+mlruns/
+mlartifacts/
+*.db
+*.sqlite
+feature_repo/data/
+feature_repo/**/registry.db
+
+# Airflow local
+airflow/logs/
+airflow/*.cfg
+
+# Claude Code: só o estado local fica de fora (settings.json do projeto é versionado)
+.claude/settings.local.json
+.claude/projects/
+
+# SO / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
