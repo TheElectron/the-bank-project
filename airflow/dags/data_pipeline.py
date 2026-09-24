@@ -1,15 +1,15 @@
-"""DAG de ingestão: Kaggle → Raw → Bronze. Só orquestra o código do pacote."""
+"""DAG do pipeline de dados: Kaggle → Raw → Bronze → Silver. Só orquestra o código do pacote."""
 
 import pendulum
 from airflow.sdk import dag, task
 
 
 @dag(
-    dag_id="ingestion",
+    dag_id="data_pipeline",
     schedule=None,  # dataset estático (Berka, 1999): disparo manual
     start_date=pendulum.datetime(2026, 1, 1, tz="UTC"),
     catchup=False,
-    tags=["ingestion"],
+    tags=["data"],
 )
 def ingestion() -> None:
     """Uma task por passo; idempotentes e sem dados no XCom (os passos trocam só paths no disco)."""
@@ -30,7 +30,15 @@ def ingestion() -> None:
         cfg = load_config()
         convert(cfg.paths.raw, cfg.paths.bronze)
 
-    download() >> to_bronze()
+    @task
+    def to_silver() -> None:
+        from the_bank_project.config import load_config
+        from the_bank_project.silver import bronze_to_silver
+
+        cfg = load_config()
+        bronze_to_silver(cfg.paths.bronze, cfg.paths.silver)
+
+    download() >> to_bronze() >> to_silver()
 
 
 ingestion()

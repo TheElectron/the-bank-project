@@ -15,7 +15,7 @@ O README ainda descreve a Gold por `client_id` até a Fase 3 atualizá-lo.
 # Comandos
 
 Interface via Makefile (`make help`): `install`, `lint`, `format`, `typecheck`,
-`test`, `check` (= o que o CI roda), `hooks`, `ingest` (Kaggle → Raw → Bronze),
+`test`, `check` (= o que o CI roda), `hooks`, `ingest` (Kaggle → Raw → Bronze), `silver` (Bronze → Silver),
 `up`/`down` (Airflow em Docker, UI em localhost:8080), `dag-check` (valida as DAGs
 na imagem do Airflow), `clean`.
 

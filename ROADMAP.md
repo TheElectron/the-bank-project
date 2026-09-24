@@ -11,7 +11,7 @@ Legenda: ⬜ não iniciada · 🚧 em andamento · ✅ concluída
 | 0    | Esqueleto do projeto, ambiente e CI mínimo                      | CI/CD               | ✅     |
 | 1a   | Ingestão Kaggle → Raw → Bronze                                  | 1, 3                | ✅     |
 | 1b   | Airflow (imagem própria + compose) e DAG de ingestão            | 2                   | ✅     |
-| 2    | Bronze → Silver                                                 | 3                   | ⬜     |
+| 2    | Bronze → Silver                                                 | 3                   | ✅     |
 | 3    | Silver → Gold                                                   | 3                   | ⬜     |
 | 4    | Feature Store (Feast)                                           | 4                   | ⬜     |
 | 5    | Treino, validação e ciclo de vida dos modelos (MLflow)          | 5                   | ⬜     |
@@ -99,7 +99,7 @@ lugar; o `CLAUDE.md` novo substitui o antigo.
 ## Fase 1b — Airflow
 
 - `docker/airflow/` (imagem própria, *constraints* oficiais) e serviços no `docker-compose.yml`.
-- DAG de ingestão (`download` → `to_bronze`) chamando o código da Fase 1a.
+- DAG `data_pipeline` (`download` → `to_bronze`, depois `to_silver`) chamando o código do pacote.
 - Convenção: uma task por passo, idempotente, sem dados no XCom.
 
 ## Fase 2 — Bronze → Silver
@@ -111,6 +111,12 @@ categóricas e reorganização 8 → 5 tabelas (`district`, `client`, `account`,
 - As validações 1:1 dos merges (hoje manuais no README) viram **testes/checks
   automatizados** (chaves únicas, integridade referencial).
 - Task adicionada à DAG.
+
+Implementado em `src/the_bank_project/silver/` (`transform.py` puro, `checks.py`,
+CLI `make silver`). Os merges usam `validate="1:1"` do pandas e `check_silver`
+cobre PKs, FKs, 1 titular por conta e cartão só em titular; nada é gravado se
+uma regra falhar. Categóricas traduzidas para rótulos em português; `""`, `" "`
+e `"?"` viram nulo; código fora do mapa de tradução é erro.
 
 ## Fase 3 — Silver → Gold
 

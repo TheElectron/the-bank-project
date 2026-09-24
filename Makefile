@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install lint format typecheck test check hooks ingest up down dag-check clean
+.PHONY: help install lint format typecheck test check hooks ingest silver up down dag-check clean
 
 help:  ## Lista os comandos
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -28,6 +28,9 @@ hooks:  ## Instala os hooks do pre-commit
 
 ingest:  ## Ingestão Kaggle → Raw → Bronze
 	poetry run python -m the_bank_project.ingestion
+
+silver:  ## Bronze → Silver (tipagem, traduções e checks)
+	poetry run python -m the_bank_project.silver
 
 up:  ## Sobe o Airflow (UI em http://localhost:8080)
 	AIRFLOW_UID=$$(id -u) docker compose up -d --build

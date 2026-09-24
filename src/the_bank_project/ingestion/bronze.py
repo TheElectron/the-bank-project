@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from the_bank_project.io import write_parquet_atomic
+
 logger = logging.getLogger(__name__)
 
 # O Berka usa ';' como delimitador (exportação europeia).
@@ -16,15 +18,11 @@ def csv_to_parquet(csv_path: Path, bronze_dir: Path, sep: str = CSV_SEPARATOR) -
 
     Tudo é lido como texto (`dtype=str`) e nada vira nulo automaticamente
     (`keep_default_na=False`), senão o pandas inferiria tipos e trocaria
-    `""`/`"NA"` por `NaN`, violando a cópia exata. A escrita passa por arquivo
-    temporário + `replace`, então uma falha no meio não deixa parquet corrompido.
+    `""`/`"NA"` por `NaN`, violando a cópia exata. A escrita é atômica
+    (`write_parquet_atomic`).
     """
-    bronze_dir.mkdir(parents=True, exist_ok=True)
-    target = bronze_dir / f"{csv_path.stem}.parquet"
-    tmp = target.with_name(f".{target.name}.tmp")
     df = pd.read_csv(csv_path, sep=sep, dtype=str, keep_default_na=False)
-    df.to_parquet(tmp, engine="pyarrow", index=False)
-    tmp.replace(target)
+    target = write_parquet_atomic(df, bronze_dir / f"{csv_path.stem}.parquet")
     logger.info("%s -> %s (%d linhas, %d colunas)", csv_path.name, target.name, *df.shape)
     return target
 

@@ -293,7 +293,17 @@ Como resultado, temos:
       "D": "Contrato em vigor, cliente em débito"
    }
    ```
-- _order_ e _trans_: inalteradas (ver schema de origem acima).
+- _order_ e _trans_: mesmo schema de origem, só tipadas e com as categóricas traduzidas.
+
+Tratamentos aplicados a todas as tabelas (`src/the_bank_project/silver/`):
+- **Tipagem:** datas `AAMMDD` viram `datetime` (século XX), valores numéricos viram `Int64`/`Float64`, ids permanecem texto;
+- **Nulos:** os placeholders `""`, `" "` e `"?"` viram nulo (ex.: `k_symbol` em branco, `A12`/`A15` do distrito 69);
+- **Categóricas traduzidas:** `frequency` (`MENSAL`, `SEMANAL`, `POR_TRANSACAO`), `relationship_type`, `trans.type`
+  (`CREDITO`, `DEBITO`, `SAQUE`), `operation` e `k_symbol` (ex.: `SEGURO`, `JUROS`, `PAGAMENTO_EMPRESTIMO`).
+  Um código fora do mapa interrompe o job em vez de virar nulo. `loan_status` e `card_type` mantêm o código original;
+- **Validação automática:** os merges 1:1 acima são verificados a cada execução (`validate="1:1"` do pandas e
+  `check_silver`), junto com chaves primárias únicas, integridade referencial, 1 titular por conta e cartão só para
+  titular. Se qualquer regra falhar, nada é gravado.
 
 #### Diagrama Entidade-Relacionamento (conjunto reestruturado)
 
