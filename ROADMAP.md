@@ -9,8 +9,8 @@ Legenda: ⬜ não iniciada · 🚧 em andamento · ✅ concluída
 | Fase | Conteúdo                                                        | Estágio do diagrama | Status |
 | ---- | --------------------------------------------------------------- | ------------------- | ------ |
 | 0    | Esqueleto do projeto, ambiente e CI mínimo                      | CI/CD               | ✅     |
-| 1a   | Ingestão Kaggle → Raw → Bronze                                  | 1, 3                | ⬜     |
-| 1b   | Airflow (imagem própria + compose) e DAG de ingestão            | 2                   | ⬜     |
+| 1a   | Ingestão Kaggle → Raw → Bronze                                  | 1, 3                | ✅     |
+| 1b   | Airflow (imagem própria + compose) e DAG de ingestão            | 2                   | ✅     |
 | 2    | Bronze → Silver                                                 | 3                   | ⬜     |
 | 3    | Silver → Gold                                                   | 3                   | ⬜     |
 | 4    | Feature Store (Feast)                                           | 4                   | ⬜     |

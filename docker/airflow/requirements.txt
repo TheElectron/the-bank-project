@@ -1,0 +1,8 @@
+# Espelha as `dependencies` do pyproject.toml (o pacote entra por PYTHONPATH,
+# não é instalado). Versões finais vêm dos constraints do Airflow.
+kaggle
+pandas
+pyarrow
+pydantic
+pydantic-settings
+pyyaml
