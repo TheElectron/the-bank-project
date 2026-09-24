@@ -1,0 +1,7 @@
+# Parâmetros gerais do projeto. Carregado por `the_bank_project.config.load_config`
+# (validado via Pydantic). Caminhos relativos são resolvidos a partir da raiz do repo.
+paths:
+  data_dir: data          # subpastas raw/ bronze/ silver/ gold/ (ver ROADMAP, Fase 0)
+
+kaggle:
+  dataset: marceloventura/the-berka-dataset
