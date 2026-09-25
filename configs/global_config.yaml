@@ -8,3 +8,12 @@ kaggle:
 
 feast:
   repo_path: feature_repo   # feature_store.yaml + features.py (Fase 4)
+
+training:
+  experiment: regressao_outflow
+  registered_model: outflow_regression
+  feature_service: outflow_regression
+  split: {train_frac: 0.70, val_frac: 0.20, gap_months: 1}
+  n_tuning_trials: 8
+  log_target: true
+  seed: 42

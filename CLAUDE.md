@@ -15,7 +15,7 @@ a Gold (`gold_account`, `gold_account_monthly_movements`) já segue essa entidad
 # Comandos
 
 Interface via Makefile (`make help`): `install`, `lint`, `format`, `typecheck`,
-`test`, `check` (= o que o CI roda), `hooks`, `ingest` (Kaggle → Raw → Bronze), `silver` (Bronze → Silver), `gold` (Silver → Gold), `features` (Feast apply + materialize),
+`test`, `check` (= o que o CI roda), `hooks`, `ingest` (Kaggle → Raw → Bronze), `silver` (Bronze → Silver), `gold` (Silver → Gold), `features` (Feast apply + materialize), `labels`/`train`/`promote` (modelo de regressão, MLflow),
 `up`/`down` (Airflow em Docker, UI em localhost:8080), `dag-check` (valida as DAGs
 na imagem do Airflow), `clean`.
 
@@ -30,6 +30,7 @@ na imagem do Airflow), `clean`.
 - Airflow roda só em imagem Docker própria (`docker/airflow/`), fora do `pyproject.toml`. O código do projeto
   roda num venv da imagem (`@task.external_python`) instalado a partir do `pyproject.toml`, não no ambiente do
   Airflow (cujos constraints fixam pandas 2.1/numpy 1.26). O decorator deve aparecer por extenso em cada task.
+- Registry do MLflow por **aliases** (`challenger`/`champion`), não stages. Promoção só pelo gate (`make promote`).
 - Nome de experimento/run no MLflow: `<etapa>_<modelo>_<data>`.
 - Reutilizar bibliotecas reconhecidas em vez de reimplementar.
 

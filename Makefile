@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install lint format typecheck test check hooks ingest silver gold features up down dag-check clean
+.PHONY: help install lint format typecheck test check hooks ingest silver gold features labels train promote up down dag-check clean
 
 help:  ## Lista os comandos
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -37,6 +37,15 @@ gold:  ## Silver → Gold (features por conta e série mensal)
 
 features:  ## Feast: apply + materialize (Gold → online store)
 	poetry run python -m the_bank_project.features
+
+labels:  ## Labels do modelo (next_month_outflow) a partir da Gold
+	poetry run python -m the_bank_project.training labels
+
+train:  ## Treina os candidatos, registra o challenger no MLflow
+	poetry run python -m the_bank_project.training train
+
+promote:  ## Gate: challenger vira champion só se superar o atual
+	poetry run python -m the_bank_project.training promote
 
 up:  ## Sobe o Airflow (UI em http://localhost:8080)
 	AIRFLOW_UID=$$(id -u) docker compose up -d --build

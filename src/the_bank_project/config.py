@@ -21,6 +21,10 @@ class PathsConfig(BaseModel):
         return base.joinpath(*parts)
 
     @property
+    def data(self) -> Path:
+        return self._resolve()
+
+    @property
     def raw(self) -> Path:
         return self._resolve("raw")
 
@@ -53,12 +57,34 @@ class FeastConfig(BaseModel):
         return self.repo_path if self.repo_path.is_absolute() else PROJECT_ROOT / self.repo_path
 
 
+class SplitConfig(BaseModel):
+    """Divisão cronológica do dataset de treino, feita por mês (não por linha)."""
+
+    train_frac: float = 0.70
+    val_frac: float = 0.20
+    gap_months: int = 1  # meses descartados entre os conjuntos, para o label de um não cair no seguinte
+
+
+class TrainingConfig(BaseModel):
+    """Treino, validação e registry do modelo de regressão de gastos."""
+
+    experiment: str = "regressao_outflow"
+    registered_model: str = "outflow_regression"
+    feature_service: str = "outflow_regression"
+    split: SplitConfig = SplitConfig()
+    n_tuning_trials: int = 8  # configurações sorteadas por modelo, além da padrão
+    log_target: bool = True  # treina em log1p(y) e reverte antes de medir (métricas na escala original)
+    seed: int = 42
+    tracking_uri: str | None = None  # None: SQLite local em data/mlflow/ (ver `Settings.mlflow_tracking_uri`)
+
+
 class GlobalConfig(BaseModel):
     """Configuração global, espelho de `configs/global_config.yaml`."""
 
     paths: PathsConfig = PathsConfig()
     kaggle: KaggleConfig
     feast: FeastConfig = FeastConfig()
+    training: TrainingConfig = TrainingConfig()
 
 
 class Settings(BaseSettings):
@@ -70,6 +96,7 @@ class Settings(BaseSettings):
     kaggle_username: str | None = None
     kaggle_key: str | None = None
     kaggle_api_token: str | None = None
+    mlflow_tracking_uri: str | None = None
 
 
 def load_config(path: Path | None = None) -> GlobalConfig:

@@ -14,7 +14,7 @@ Legenda: ⬜ não iniciada · 🚧 em andamento · ✅ concluída
 | 2    | Bronze → Silver                                                 | 3                   | ✅     |
 | 3    | Silver → Gold                                                   | 3                   | ✅     |
 | 4    | Feature Store (Feast)                                           | 4                   | ✅     |
-| 5    | Treino, validação e ciclo de vida dos modelos (MLflow)          | 5                   | ⬜     |
+| 5    | Treino, validação e ciclo de vida dos modelos (MLflow)          | 5                   | ✅     |
 | 6    | Inferência via API (FastAPI + Docker)                           | 6                   | ⬜     |
 | 7    | Monitoramento e re-treino por drift                             | 7                   | ⬜     |
 | 8    | CD e fechamento                                                 | CI/CD               | ⬜     |
@@ -179,6 +179,15 @@ precisam ser mascarados pela própria data antes de virar feature.
 - Registry com **aliases** (`champion`/`challenger`) — a decisão anterior
   de usar `stage` será revisitada por a API de stages estar depreciada.
 - **Gate de promoção:** o challenger só vira campeão se superar o atual.
+
+Implementado em `src/the_bank_project/training/` (`labels`, `dataset`, `split`,
+`models`, `evaluate`, `train`, `registry`, `tracking`; CLI `make labels|train|promote`),
+`docker/mlflow/` (servidor no compose) e a DAG `training` (`train` → `promote`); a
+task `to_labels` entrou na `data_pipeline`. Decisões: aliases (não stages); corte por
+mês com 1 mês de folga; 2 baselines ingênuos; log1p no alvo exceto na regressão
+linear; gate estrito reavaliando os dois modelos no mesmo teste. Resultado e
+ressalvas no README ("Modelo de regressão").
+
 - **Fase 5b (fora do caminho crítico):** modelo de classificação de
   inadimplência (TBD no README): definir label, features e métricas antes de implementar.
 

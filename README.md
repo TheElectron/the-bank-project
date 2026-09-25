@@ -1,13 +1,19 @@
 # The Bank Project
 
-O projeto está baseado em 3 etapas.
+O projeto consiste em 3 etapas.
 - Extração, processamento, enriquecimento e armazenamento dos dados utilizados;
 - Geração de um modelo de ML;
 - Geração de um chat conversacional;
 
-## Pipeline de dados
+## Pipeline
 
-Kaggle → Raw → Bronze → Silver → Gold → Feast, orquestrado por uma DAG do Airflow (`data_pipeline`) que só chama o código do pacote `the_bank_project`. Cada etapa também roda sozinha, pelo Makefile:
+A imagem a seguir apresenta as principais etapas do pipeline de elaborado para o projeto.\
+Todo fluxo é orquestrado via Airflow, o download dos arquivos brutos, a criação das camadas Bronze, Silver e Gold, a configuração da _feature store_, o treinamento, validação e promoção dos modelos.
+
+![Representação esquemática do pipeline desenvolvido](architecture_diagram.png)
+
+
+Cada etapa do pipeline é idempotente, reexecutar sobrescreve o resultado sem duplicar nada, e pode ser executada individualmente, via Makefile:
 
 | Comando          | Etapa                                                                 |
 | ---------------- | --------------------------------------------------------------------- |
@@ -15,15 +21,18 @@ Kaggle → Raw → Bronze → Silver → Gold → Feast, orquestrado por uma DAG
 | `make silver`    | Bronze → Silver (tipagem, nulos, traduções, 8 → 5 tabelas, checks)    |
 | `make gold`      | Silver → Gold (`gold_account` e `gold_account_monthly_movements`)     |
 | `make features`  | Feast: registra as views (`apply`) e carrega o online store (`materialize`)  |
+| `make labels`    | Labels do modelo de regressão (`next_month_outflow`) a partir da Gold      |
+| `make train`     | Treina os candidatos e registra o vencedor como `challenger` no MLflow     |
+| `make promote`   | Gate de promoção: o `challenger` vira `champion` só se superar o atual     |
 | `make up`/`down` | Sobe/derruba o Airflow em Docker (UI em http://localhost:8080)        |
 | `make check`     | Lint, type check e testes (o mesmo que o CI roda)                     |
 
-As credenciais do Kaggle vão em `.env` (modelo em `.env.example`). Os dados ficam em `data/{raw,bronze,silver,gold}/`, fora do git. Todas as etapas são idempotentes: reexecutar sobrescreve o resultado sem duplicar nada. Treino, serving e monitoramento ainda não foram implementados; ver `ROADMAP.md`.
+Nota: Para download dos arquivos brutos é necessário que as credenciais para acesso aos dados na Kaggle estejam presentes no arquivo `.env`, conforme modelo em `.env.example`. 
 
 ## Dados
 
 ### Camada Bronze
-O ponto de partida deste projeto é o [The Berka Dataset](https://www.kaggle.com/datasets/marceloventura/the-berka-dataset), este conjunto de dados reune informações financeiras de um banco tcheco, com transações de 1993 a 1998 (dataset divulgado em 1999).\
+O ponto de partida deste projeto é o [The Berka Dataset](https://www.kaggle.com/datasets/marceloventura/the-berka-dataset), este conjunto de dados reune informações financeiras de um banco tcheco, com transações de 1993 a 1998.\
 Temos disponíveis oito tabelas, cada uma delas com o seguinte _schema_ de dados:
 
 - _account_ (4500 registros):
@@ -652,7 +661,7 @@ y(T+1) = outflow da conta no mês T+1
 next_month_outflow = outflow_amount(T+1)
 ```
 
-A variável `next_month_outflow` não faz parte da Gold nem do conjunto de features disponibilizado no Feature Store. Ela é construída durante a preparação do dataset de treinamento, deslocando `outflow_amount` para o mês seguinte dentro de cada conta.
+A variável `next_month_outflow` não faz parte da Gold nem do Feature Store. Ela é a tabela de labels (`make labels`), que desloca `outflow_amount` para o mês seguinte dentro de cada conta; as features vêm do Feast com join point-in-time em `event_timestamp` (o mês T).
 
 **Granularidade:**
 
@@ -660,7 +669,7 @@ A variável `next_month_outflow` não faz parte da Gold nem do conjunto de featu
 1 observação = 1 conta por mês
 ```
 
-A Gold tem 185.326 registros mensais (1.056.320 transações agregadas por conta). O último mês de cada conta não tem mês seguinte e, portanto, não gera observação de treino; o número final de observações será definido na preparação do dataset.
+A Gold tem 185.326 registros mensais (1.056.320 transações agregadas por conta). O último mês de cada conta não tem mês seguinte e não gera observação de treino, o que deixa **180.826 observações** (meses 1993-01 a 1998-11), gravadas em `data/gold/labels_outflow.parquet` (`account_id`, `event_timestamp`, `next_month_outflow`).
 
 **Modelos:**
 
@@ -674,7 +683,9 @@ Gradient Boosting
 XGBoost
 ```
 
-A regressão linear será utilizada como baseline para estabelecer uma referência simples de desempenho. Os demais modelos serão avaliados para verificar se relações não lineares e interações entre as features contribuem para melhorar as previsões.
+A regressão linear é o baseline de modelo; os demais verificam se relações não lineares e interações melhoram as previsões. O "Gradient Boosting" é o `HistGradientBoostingRegressor` do scikit-learn (o `GradientBoostingRegressor` clássico levaria dezenas de minutos neste volume). Junto entram **dois baselines sem treino**, repetir o `outflow_amount` do mês atual e a média dos últimos 3 meses: um modelo só conta se bater o melhor deles (`test_skill_vs_naive` = `1 − MAE/MAE do melhor ingênuo`).
+
+**Alvo em `log1p`:** as saídas são muito assimétricas (mediana ~11 mil, máximo ~290 mil). Random Forest, Gradient Boosting e XGBoost treinam em `log1p(y)` e revertem antes de medir, o que reduziu o MAE de validação em ~2% (e piorou RMSE/R² em ~5%, já que o MAE é a métrica principal). A regressão linear **não** usa o log: ela extrapola em `log1p` e o `expm1` explode (MAE de validação 32 mil contra 8 mil sem o log).
 
 **Métricas observadas:**
 
@@ -727,15 +738,39 @@ inflow_mom_change
 balance_mom_change
 ```
 
-Devido ao caráter temporal dos dados, o conjunto de treinamento não será dividido aleatoriamente. A divisão será realizada respeitando a ordem cronológica dos registros:
+#### Divisão e seleção
+
+Por causa do caráter temporal, a divisão é cronológica e feita **por mês**, escolhendo os cortes para chegar perto de 70/20/10 das *linhas* (as linhas se concentram nos anos finais, então 70% das linhas não são 70% do tempo). Entre os conjuntos há **1 mês de folga** descartado: o label de T é o outflow de T+1, então sem folga o último mês de treino usaria como label um valor que já é feature do primeiro mês de validação.
 
 ```text
-Train      → 70% inicial do período
-Validation → 20% seguinte
-Test       → 10% final
+Treino     1993-01 .. 1997-10   122.618 linhas
+(folga     1997-11)
+Validação  1997-12 .. 1998-06    31.420 linhas
+(folga     1998-07)
+Teste      1998-08 .. 1998-11    17.874 linhas
 ```
 
-Dessa forma, o modelo será treinado utilizando informações do passado e avaliado progressivamente em períodos posteriores, reduzindo o risco de *data leakage*.
+Para cada modelo, 8 configurações de hiperparâmetros sorteadas (além da padrão) são ajustadas **só no treino** e comparadas na validação. O vencedor de cada algoritmo é reajustado em treino + validação e medido **uma vez** no teste. O modelo registrado é o de menor MAE de **validação**; o teste nunca decide a seleção (há um teste automatizado que corrompe o alvo do teste e confere que o vencedor não muda).
+
+#### Resultados (execução de 2026-09-24)
+
+| Modelo               | MAE validação | MAE teste | RMSE teste | R² teste | Skill vs ingênuo (teste) |
+| -------------------- | ------------- | --------- | ---------- | -------- | ------------------------ |
+| Média dos 3 meses    | 9.918         | 8.183     | 15.871     | 0,35     | (referência)             |
+| Persistência         | 11.577        | 9.197     | 18.910     | 0,08     |                          |
+| Regressão linear     | 8.051         | 7.970     | 13.391     | 0,54     | 0,03                     |
+| Gradient Boosting    | 7.232         | 6.637     | 12.979     | 0,57     | 0,19                     |
+| XGBoost              | 7.112         | 6.557     | 12.896     | 0,57     | 0,20                     |
+| **Random Forest**    | **7.059**     | **6.478** | 12.990     | 0,57     | **0,21**                 |
+
+Como ler: os três modelos de árvores erram ~20% menos que o melhor ingênuo, e a linear só empata com ele no teste. **A diferença entre Random Forest, XGBoost e Gradient Boosting é pequena (menos de 2,5% no MAE)** e não foi testada estatisticamente; a escolha do Random Forest pela validação é uma vantagem de ~0,8% sobre o XGBoost, que não deve ser tratada como definitiva. O R² de 0,57 mostra que boa parte da variação mensal das saídas não é explicada pelas features atuais. O teste tem só 4 meses (1998-08 a 1998-11).
+
+#### Ciclo de vida no MLflow
+
+- **Experimento** `regressao_outflow`; **runs** `treino_<modelo>_<data>` (mais um run aninhado por configuração testada). Todos logam as mesmas métricas (`val_*` e `test_*`: MAE, RMSE e R²).
+- **Registry** `outflow_regression`, com **aliases** (não stages, depreciados no MLflow): o treino registra o vencedor pela validação como `challenger`; `make promote` o transforma em `champion` se ele tiver MAE de teste **estritamente menor** que o do campeão atual. Os dois modelos são reavaliados no mesmo teste no momento do gate. Sem campeão, o primeiro `challenger` assume. O resultado do gate fica em tags da versão (`gate`, `gate_test_mae`).
+- O modelo é carregável por `models:/outflow_regression@champion` (formato cloudpickle: o padrão skops exige listar cada tipo do modelo como confiável, e o registry é local).
+- **Tracking:** com `MLFLOW_TRACKING_URI` definido usa o servidor (o Docker Compose sobe um); sem ele, um SQLite local em `data/mlflow/`.
 
 ---
 
