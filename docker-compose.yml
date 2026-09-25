@@ -1,4 +1,4 @@
-# Infra local (100% Docker). Cresce a cada fase; Airflow (Fase 1b; roda também o Feast, Fase 4) e MLflow (Fase 5).
+# Infra local (100% Docker). Cresce a cada fase; Airflow (Fase 1b; roda também o Feast, Fase 4), MLflow (Fase 5) e a API de inferência (Fase 6).
 x-airflow-common: &airflow-common
   build:
     context: .
@@ -54,6 +54,30 @@ services:
       - "5000:5000"
     volumes:
       - mlflow-data:/mlflow
+
+  serving:
+    build:
+      context: .
+      dockerfile: docker/serving/Dockerfile
+    image: the-bank-project-serving:latest
+    # UID do host: o Feast abre (e o SQLite trava) arquivos em feature_repo/data, que o Airflow também escreve.
+    user: "${AIRFLOW_UID:-1000}:0"
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      HOME: /tmp
+    volumes:
+      - ./feature_repo:/app/feature_repo
+      - ./data/gold:/app/data/gold:ro
+    ports:
+      - "8000:8000"
+    depends_on:
+      - mlflow
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
 
   airflow-init:
     <<: *airflow-common

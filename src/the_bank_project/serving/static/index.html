@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>The Bank Project · Previsão de saídas</title>
+  <meta name="description" content="Compare o valor previsto pelo modelo com o valor real de saídas do mês seguinte, conta a conta." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%2315140f'/%3E%3Cpath d='M9 27l7-8 5 5 10-13' fill='none' stroke='%23fcfcfb' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+  <link rel="preload" href="/static/fonts/fraunces.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/static/fonts/hanken-grotesk.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="/static/styles.css" />
+  <script>
+    // aplica o tema salvo antes da primeira pintura (evita flash)
+    try { const t = localStorage.getItem("tbp-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+</head>
+<body>
+  <a class="skip" href="#lab">Ir para o laboratório</a>
+
+  <header class="top">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 40 40" aria-hidden="true">
+        <rect width="40" height="40" rx="11" fill="var(--ink)" />
+        <path d="M9 28V12M9 28h22" stroke="var(--surface)" stroke-width="1.6" stroke-linecap="round" opacity=".45" />
+        <path d="M11 26l6-7 5 4 9-11" fill="none" stroke="var(--surface)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+        <circle cx="31" cy="12" r="3.4" fill="var(--series-1)" stroke="var(--ink)" stroke-width="2" />
+      </svg>
+      <div>
+        <h1>The Bank <em>Project</em></h1>
+        <p>Previsão das saídas do mês seguinte, conta a conta</p>
+      </div>
+    </div>
+    <div class="top-right">
+      <div class="chip" id="model-chip" hidden><span class="dot"></span><span id="model-chip-text"></span></div>
+      <button class="icon-btn" id="theme" type="button" aria-label="Alternar entre tema claro e escuro" title="Alternar tema">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></svg>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero" id="proof" aria-labelledby="hero-title">
+      <div class="hero-copy reveal" style="--d:0">
+        <p class="eyebrow" id="hero-eyebrow">Carregando o modelo campeão…</p>
+        <h2 id="hero-title">Quanto uma conta vai gastar no mês que vem?</h2>
+        <p class="lede" id="hero-lede">O modelo lê o comportamento recente de cada conta e prevê o total de saídas do mês seguinte.</p>
+        <div class="stats" id="hero-stats" aria-live="polite"></div>
+      </div>
+      <figure class="hero-chart reveal" style="--d:2">
+        <figcaption><b>Erro médio no teste</b> (MAE, em Kč). Menor é melhor.</figcaption>
+        <div class="chart" id="chart-models" aria-live="polite"></div>
+        <div class="legend"><span><i class="s-pred"></i>Modelo campeão</span><span><i class="s-gray"></i>Outros modelos</span><span><i class="s-base"></i>Sem treino (regra simples)</span></div>
+      </figure>
+    </section>
+
+    <section class="lab" id="lab" aria-labelledby="lab-title">
+      <div class="lab-head">
+        <p class="eyebrow">Laboratório</p>
+        <h2 class="section-title" id="lab-title">Compare o previsto com o que de fato aconteceu</h2>
+        <p class="lede">Escolha o mês de referência e algumas contas. O modelo prevê as saídas do mês seguinte usando só o que era conhecido até ali; em meses passados, você vê o valor real ao lado.</p>
+      </div>
+      <div class="lab-grid">
+        <aside class="picker" id="picker" aria-label="Seleção de mês e contas"></aside>
+        <div class="results" id="results" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <section class="overall" id="overall" aria-labelledby="overall-title" hidden>
+      <p class="eyebrow">Desempenho geral</p>
+      <h2 class="section-title" id="overall-title">E no conjunto de teste inteiro?</h2>
+      <p class="lede" id="overall-lede"></p>
+      <div id="overall-body"></div>
+    </section>
+  </main>
+
+  <footer>
+    <span>Dados: Berka Dataset (banco tcheco, 1993–1998). Valores em coroas tchecas (Kč).</span>
+    <span>API: <a href="/docs">/docs</a> · <a href="/health">/health</a> · <a href="/metrics">/metrics</a></span>
+  </footer>
+
+  <script type="module" src="/static/js/app.js"></script>
+</body>
+</html>

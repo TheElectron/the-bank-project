@@ -14,10 +14,13 @@ a Gold (`gold_account`, `gold_account_monthly_movements`) já segue essa entidad
 
 # Comandos
 
-Interface via Makefile (`make help`): `install`, `lint`, `format`, `typecheck`,
-`test`, `check` (= o que o CI roda), `hooks`, `ingest` (Kaggle → Raw → Bronze), `silver` (Bronze → Silver), `gold` (Silver → Gold), `features` (Feast apply + materialize), `labels`/`train`/`promote` (modelo de regressão, MLflow),
-`up`/`down` (Airflow em Docker, UI em localhost:8080), `dag-check` (valida as DAGs
-na imagem do Airflow), `clean`.
+Interface via Makefile (`make help`):
+
+- Qualidade: `install`, `lint`, `format`, `typecheck`, `test`, `check` (= o que o CI roda), `hooks`, `clean`.
+- Dados: `ingest` (Kaggle → Raw → Bronze), `silver`, `gold`, `features` (Feast apply + materialize).
+- Modelo: `labels`, `train`, `promote` (gate do MLflow).
+- Serving: `serve` (API + interface em :8000, local; precisa de `MLFLOW_TRACKING_URI` no `.env`).
+- Infra Docker: `up`/`down` (Airflow :8080, MLflow :5000 e API :8000), `dag-check` (valida as DAGs na imagem do Airflow).
 
 # Estilo de código
 
@@ -28,8 +31,12 @@ na imagem do Airflow), `clean`.
 - Config em `configs/*.yaml` validada via Pydantic (`the_bank_project.config`); segredos em `.env` (modelo em `.env.example`). Nada de paths hardcoded.
 - Um step de pipeline = função pura + CLI, testável sem Airflow; DAGs só envolvem o código do pacote.
 - Airflow roda só em imagem Docker própria (`docker/airflow/`), fora do `pyproject.toml`. O código do projeto
-  roda num venv da imagem (`@task.external_python`) instalado a partir do `pyproject.toml`, não no ambiente do
+  roda num venv da imagem (`@task.external_python`) instalado pelo `poetry.lock`, não no ambiente do
   Airflow (cujos constraints fixam pandas 2.1/numpy 1.26). O decorator deve aparecer por extenso em cada task.
+- Serving em `the_bank_project.serving` (`state` → `service`/`catalog`/`model_store` → `routes` → `app`): a API
+  não lê a Gold; features só via `FeatureReader`. Interface em
+  `serving/static/` sem build (JS puro, textos sempre via `textContent`). Imagens da API e do venv do Airflow
+  instalam pelo `poetry.lock` (o modelo do MLflow é um pickle).
 - Registry do MLflow por **aliases** (`challenger`/`champion`), não stages. Promoção só pelo gate (`make promote`).
 - Nome de experimento/run no MLflow: `<etapa>_<modelo>_<data>`.
 - Reutilizar bibliotecas reconhecidas em vez de reimplementar.

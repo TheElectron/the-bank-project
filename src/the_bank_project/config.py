@@ -78,6 +78,16 @@ class TrainingConfig(BaseModel):
     tracking_uri: str | None = None  # None: SQLite local em data/mlflow/ (ver `Settings.mlflow_tracking_uri`)
 
 
+class ServingConfig(BaseModel):
+    """API de inferência (FastAPI)."""
+
+    host: str = "0.0.0.0"
+    port: int = 8000
+    max_batch: int = 100  # contas por chamada a /predict
+    model_poll_seconds: int = 60  # 0 desliga: consulta o alias `champion` e recarrega se mudou
+    history_months: int = 12  # meses de histórico no detalhe da conta
+
+
 class GlobalConfig(BaseModel):
     """Configuração global, espelho de `configs/global_config.yaml`."""
 
@@ -85,6 +95,7 @@ class GlobalConfig(BaseModel):
     kaggle: KaggleConfig
     feast: FeastConfig = FeastConfig()
     training: TrainingConfig = TrainingConfig()
+    serving: ServingConfig = ServingConfig()
 
 
 class Settings(BaseSettings):

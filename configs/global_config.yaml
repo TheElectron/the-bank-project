@@ -17,3 +17,9 @@ training:
   n_tuning_trials: 8
   log_target: true
   seed: 42
+
+serving:
+  port: 8000
+  max_batch: 100
+  model_poll_seconds: 60
+  history_months: 12

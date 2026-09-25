@@ -1,10 +1,12 @@
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 
 import pandas as pd
 import pytest
+from mlflow import MlflowClient
 
-from the_bank_project.config import PROJECT_ROOT
+from the_bank_project.config import PROJECT_ROOT, GlobalConfig, KaggleConfig, PathsConfig, SplitConfig, TrainingConfig
 from the_bank_project.gold import build_gold
 
 D = pd.Timestamp
@@ -64,3 +66,36 @@ def repo(silver: dict[str, pd.DataFrame], tmp_path: Path) -> Path:
     for name in ("feature_store.yaml", "features.py"):
         shutil.copy(PROJECT_ROOT / "feature_repo" / name, repo / name)
     return repo
+
+
+@pytest.fixture(scope="session")
+def db_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """SQLite do MLflow já migrado. Criar o schema custa ~45 s; copiar o arquivo, milissegundos."""
+    path = tmp_path_factory.mktemp("mlflow_template") / "mlflow.db"
+    MlflowClient(tracking_uri=f"sqlite:///{path}").search_experiments()
+    return path
+
+
+@pytest.fixture(scope="session")
+def cfg_factory(db_template: Path) -> Callable[[Path], GlobalConfig]:
+    """Config isolada: dados e MLflow (banco copiado do template) em `root`, poucos trials."""
+
+    def make(root: Path) -> GlobalConfig:
+        shutil.copy(db_template, root / "mlflow.db")
+        training = TrainingConfig(
+            n_tuning_trials=1, split=SplitConfig(train_frac=0.6, val_frac=0.2, gap_months=1),
+            tracking_uri=f"sqlite:///{root / 'mlflow.db'}",
+        )  # fmt: skip
+        return GlobalConfig(paths=PathsConfig(data_dir=root), kaggle=KaggleConfig(dataset="o/d"), training=training)
+
+    return make
+
+
+@pytest.fixture
+def cfg(tmp_path: Path, cfg_factory: Callable[[Path], GlobalConfig]) -> GlobalConfig:
+    return cfg_factory(tmp_path)
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_mlflow(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)

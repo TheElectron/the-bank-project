@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install lint format typecheck test check hooks ingest silver gold features labels train promote up down dag-check clean
+.PHONY: help install lint format typecheck test check hooks ingest silver gold features labels train promote serve up down dag-check clean
 
 help:  ## Lista os comandos
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -47,7 +47,10 @@ train:  ## Treina os candidatos, registra o challenger no MLflow
 promote:  ## Gate: challenger vira champion só se superar o atual
 	poetry run python -m the_bank_project.training promote
 
-up:  ## Sobe o Airflow (UI em http://localhost:8080)
+serve:  ## API de inferência local em http://localhost:8000 (precisa de MLFLOW_TRACKING_URI no .env)
+	poetry run python -m the_bank_project.serving
+
+up:  ## Sobe Airflow (:8080), MLflow (:5000) e a API de inferência (:8000)
 	AIRFLOW_UID=$$(id -u) docker compose up -d --build
 
 down:  ## Derruba a infra local

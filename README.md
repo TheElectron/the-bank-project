@@ -7,159 +7,149 @@ O projeto consiste em 3 etapas.
 
 ## Pipeline
 
-A imagem a seguir apresenta as principais etapas do pipeline de elaborado para o projeto.\
-Todo fluxo é orquestrado via Airflow, o download dos arquivos brutos, a criação das camadas Bronze, Silver e Gold, a configuração da _feature store_, o treinamento, validação e promoção dos modelos.
+A imagem a seguir apresenta as principais etapas do pipeline elaborado para o projeto.\
+O fluxo é orquestrado via Airflow, iniciando com o download dos arquivos brutos, a criação das camadas Bronze, Silver e Gold, até a configuração da _feature store_, o treinamento, validação e promoção dos modelos.
 
 ![Representação esquemática do pipeline desenvolvido](architecture_diagram.png)
 
+O diagrama mostra a arquitetura-alvo: o monitoramento (Fase 7 do `ROADMAP.md`) ainda não foi implementado.
 
-Cada etapa do pipeline é idempotente, reexecutar sobrescreve o resultado sem duplicar nada, e pode ser executada individualmente, via Makefile:
+Cada etapa do pipeline é idempotente (reexecutar sobrescreve o resultado, sem duplicar nada) e pode ser executada individualmente, via Makefile:
 
-| Comando          | Etapa                                                                 |
-| ---------------- | --------------------------------------------------------------------- |
-| `make ingest`    | Kaggle → Raw (`.csv`) → Bronze (`.parquet`, cópia 1:1)                |
-| `make silver`    | Bronze → Silver (tipagem, nulos, traduções, 8 → 5 tabelas, checks)    |
-| `make gold`      | Silver → Gold (`gold_account` e `gold_account_monthly_movements`)     |
-| `make features`  | Feast: registra as views (`apply`) e carrega o online store (`materialize`)  |
-| `make labels`    | Labels do modelo de regressão (`next_month_outflow`) a partir da Gold      |
-| `make train`     | Treina os candidatos e registra o vencedor como `challenger` no MLflow     |
-| `make promote`   | Gate de promoção: o `challenger` vira `champion` só se superar o atual     |
-| `make up`/`down` | Sobe/derruba o Airflow em Docker (UI em http://localhost:8080)        |
-| `make check`     | Lint, type check e testes (o mesmo que o CI roda)                     |
+| Comando          | Etapa                                                                                           |
+| ---------------- | ----------------------------------------------------------------------------------------------- |
+| `make ingest`    | Kaggle → Raw (`.csv`) → Bronze (`.parquet`)                                                     |
+| `make silver`    | Bronze → Silver (tipagem, nulos, traduções e reestruturação)                                    |
+| `make gold`      | Silver → Gold (`gold_account` e `gold_account_monthly_movements`)                               |
+| `make features`  | Feast: registra as views e carrega o online store                                               |
+| `make labels`    | Labels do modelo de regressão (`next_month_outflow`) a partir da Gold                           |
+| `make train`     | Treina os candidatos e registra o vencedor como `challenger` no MLflow                          |
+| `make promote`   | O `challenger` se torna `champion` caso supere os resultados do modelo atual                    |
+| `make serve`     | API de inferência e interface web, localmente (http://localhost:8000)                           |
+| `make up`/`down` | Sobe e derruba o Airflow (:8080), o MLflow (:5000) e a API de inferência (:8000), via Docker |
+| `make check`     | Lint, type check e testes                                                                       |
 
-Nota: Para download dos arquivos brutos é necessário que as credenciais para acesso aos dados na Kaggle estejam presentes no arquivo `.env`, conforme modelo em `.env.example`. 
+Nota: para baixar os arquivos brutos, as credenciais do Kaggle precisam estar no arquivo `.env`, conforme o modelo em `.env.example`.
 
 ## Dados
 
 ### Camada Bronze
-O ponto de partida deste projeto é o [The Berka Dataset](https://www.kaggle.com/datasets/marceloventura/the-berka-dataset), este conjunto de dados reune informações financeiras de um banco tcheco, com transações de 1993 a 1998.\
-Temos disponíveis oito tabelas, cada uma delas com o seguinte _schema_ de dados:
+O ponto de partida deste projeto é o [The Berka Dataset](https://www.kaggle.com/datasets/marceloventura/the-berka-dataset). Este conjunto de dados reúne informações financeiras de um banco tcheco, com transações de 1993 a 1998.\
+Temos disponíveis oito tabelas. Na Bronze **todos os campos são gravados como string** (cópia 1:1 do `.csv`, sem tipagem nem tratamento de nulos): os tipos reais são aplicados na Silver, e o formato de origem aparece na descrição de cada campo.
 
-- _account_ (4500 registros):
-   - account_id: Chave de identificação da conta;
-   - district_id Chave de identificação do distrito;
-   - date: Data de criação da conta, no formato AAMMDD;
-   - frequency: Frequência de emissão do extrato
-   ```
-   {
-      "POPLATEK MESICNE": "Mensal",
-      "POPLATEK TYDNE": "Semanal",
-      "POPLATEK PO OBRATU": "Por transação"
-   }
-   ```
-- _card_ (892 registros):
-   - card_id: Chave de identificação do cartão;
-   - disp_id: Chave de identificação do _disp_ (elemento que relaciona o cliente e suas contas);
-   - issued: Data de emissão do cartão, no formato: AAMMDD
-   - type: Tipo de cartão:
-   ```
-      'junior', 'classic' e 'gold'
-   ```
-- _clients_ (5369 registros):
-   - client_id: Chave de identificação do cliente;
-   - district_id: Chave de identificação do distrito;
-   - birth_number Data de nascimento e sexo, nos formatos AAMMDD (para homens) e AAMM+50DD (para mulheres)
-- _disp_ (5369 registros):
-   - disp_id: Chave de identificação do _disp_ (elemento que relaciona o cliente e suas contas);
-   - client_id: Identificador do cliente;
-   - account_id: Identificador da conta;
-   - type: Tipo de _disp_ 
-   ```
-      Nota: Somente o proprietário pode emitir ordens  ou realizar empréstimos.
-   ```
-- _district_ (77 registros):
-   - A1: district_id;
-   - A2: Nome do Distrito;
-   - A3: Região;
-   - A4: Nº de Habitantes;
-   - A5: Nº de Municípios com menos de 499 habitantes;
-   - A6: Nº de Municípios com 500 a 1999 habitantes;
-   - A7: Nº de Municípios com 2000 a 9999 habitantes;
-   - A8: Nº de Municípios com mais de 10000 habitantes;
-   - A9: Nº de Cidades;
-   - A10: Proporção de habitantes urbanos;
-   - A11: Salário Médio;
-   - A12: Taxa de desemprego em 1995;
-   - A13: Taxa de desemprego em 1996;
-   - A14: Nº de Empreendedores por 1000 habitantes;
-   - A15: Nº de Crimes cometidos em 1995;
-   - A16: Nº de Crimes cometidos em 1996;
+#### `account`
 
-- _loan_ (682 registros):
-   - loan_id: Chave de identificação do empréstimo;
-   - account_id: Chave de identificação da conta;
-   - date: Data de concessão do empréstimo, no formato AAMMDD;
-   - amount: Valor do empréstimo;
-   - duration: Duração do empréstimo, em meses;
-   - payments: Valor do pagamento mensal;
-   - status: Situação de pagamento do empréstimo
-   ```
-   {
-      "A": "Contrato encerrado, sem dívidas",
-      "B": "Contrato encerrado, empréstimo não pago",
-      "C": "Contrato em vigor, em dia",
-      "D": "Contrato em vigor, cliente em débito"
-   }
-   ```
-- _order_ (6471 registros):
-   - order_id: Chave de identificação da ordem;
-   - account_id: Chave de identificação da conta emissora;
-   - bank_to: Código do banco destinatário, composto por duas letras;
-   - account_to: Chave de identificação da conta destinatária;
-   - amount: Valor debitado da conta;
-   - k_symbol: Propósito do pagamento
-   ```
-   {
-      "POJISTNE": "Pagamento de seguro",
-      "SIPO": "Pagamento doméstico",
-      "LEASING": "Pagamento de leasing",
-      "UVER": "Pagamento de empréstimo"
-   }
-   ```
-- _trans_ (1.056.320 registros):
-   - trans_id: Chave de identificação da transação;
-   - account_id: Chave de identificação da conta;
-   - date: Data da transação, no formato AAMMDD;
-   - type: Tipo de transação
-   ```
-   {
-      "PRIJEM": "Crédito",
-      "VYDAJ": "Débito",
-      "VYBER": "Saque (variação legada de VYDAJ para um subconjunto de transações)"
-   }
-   ```
-   - operation: Modo de realização da transação
-   ```
-   {
-      "VYBER KARTOU": "Saque com cartão",
-      "VKLAD": "Depósito em dinheiro",
-      "PREVOD Z UCTU": "Transferência recebida (de outro banco)",
-      "VYBER": "Saque em dinheiro",
-      "PREVOD NA UCET": "Transferência enviada (para outro banco)"
-   }
-   ```
-   - amount: Valor da transação;
-   - balance: Saldo da conta após a transação;
-   - k_symbol: Caracterização da transação
-   ```
-   {
-      "POJISTNE": "Pagamento de seguro",
-      "SLUZBY": "Tarifa de emissão de extrato",
-      "UROK": "Juros",
-      "SANKC. UROK": "Juros de penalidade por saldo negativo",
-      "SIPO": "Pagamento doméstico",
-      "DUCHOD": "Pensão",
-      "UVER": "Pagamento de empréstimo"
-   }
-   ```
-   - bank: Código do banco parceiro, composto por duas letras (aplicável apenas a transferências);
-   - account: Chave de identificação da conta parceira (aplicável apenas a transferências);
+4.500 registros.
+
+| Campo         | Tipo   | Descrição                                                                                                                          |
+| ------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `account_id`  | string | Chave de identificação da conta. **PK**                                                                                            |
+| `district_id` | string | Chave de identificação do distrito. **FK** → `district.A1`                                                                         |
+| `date`        | string | Data de criação da conta, no formato `AAMMDD`.                                                                                     |
+| `frequency`   | string | Frequência de emissão do extrato: `POPLATEK MESICNE` (mensal), `POPLATEK TYDNE` (semanal) ou `POPLATEK PO OBRATU` (por transação). |
+
+#### `card`
+
+892 registros.
+
+| Campo     | Tipo   | Descrição                                                                                          |
+| --------- | ------ | -------------------------------------------------------------------------------------------------- |
+| `card_id` | string | Chave de identificação do cartão. **PK**                                                           |
+| `disp_id` | string | Chave de identificação do `disp` (elemento que relaciona o cliente e suas contas). **FK** → `disp` |
+| `issued`  | string | Data de emissão do cartão, no formato `AAMMDD` (com sufixo de hora `00:00:00`).                    |
+| `type`    | string | Tipo de cartão: `junior`, `classic` ou `gold`.                                                     |
+
+#### `client`
+
+5.369 registros.
+
+| Campo          | Tipo   | Descrição                                                                                       |
+| -------------- | ------ | ----------------------------------------------------------------------------------------------- |
+| `client_id`    | string | Chave de identificação do cliente. **PK**                                                       |
+| `district_id`  | string | Chave de identificação do distrito de residência. **FK** → `district.A1`                        |
+| `birth_number` | string | Data de nascimento e sexo: `AAMMDD` para homens e `AAMM+50DD` (mês somado de 50) para mulheres. |
+
+#### `disp`
+
+5.369 registros. Relaciona cada cliente à sua conta. Somente o proprietário pode emitir ordens ou realizar empréstimos.
+
+| Campo        | Tipo   | Descrição                                                           |
+| ------------ | ------ | ------------------------------------------------------------------- |
+| `disp_id`    | string | Chave de identificação do `disp`. **PK**                            |
+| `client_id`  | string | Identificador do cliente. **FK** → `client`                         |
+| `account_id` | string | Identificador da conta. **FK** → `account`                          |
+| `type`       | string | Tipo de `disp`: `OWNER` (proprietário) ou `DISPONENT` (dependente). |
+
+#### `district`
+
+77 registros.
+
+| Campo | Tipo   | Descrição                                                |
+| ----- | ------ | -------------------------------------------------------- |
+| `A1`  | string | Identificador do distrito. **PK**                        |
+| `A2`  | string | Nome do distrito.                                        |
+| `A3`  | string | Região.                                                  |
+| `A4`  | string | Número de habitantes.                                    |
+| `A5`  | string | Número de municípios com menos de 499 habitantes.        |
+| `A6`  | string | Número de municípios com 500 a 1999 habitantes.          |
+| `A7`  | string | Número de municípios com 2000 a 9999 habitantes.         |
+| `A8`  | string | Número de municípios com mais de 10000 habitantes.       |
+| `A9`  | string | Número de cidades.                                       |
+| `A10` | string | Proporção de habitantes urbanos.                         |
+| `A11` | string | Salário médio.                                           |
+| `A12` | string | Taxa de desemprego em 1995 (`?` no distrito 69).         |
+| `A13` | string | Taxa de desemprego em 1996.                              |
+| `A14` | string | Número de empreendedores por 1000 habitantes.            |
+| `A15` | string | Número de crimes cometidos em 1995 (`?` no distrito 69). |
+| `A16` | string | Número de crimes cometidos em 1996.                      |
+
+#### `loan`
+
+682 registros.
+
+| Campo        | Tipo   | Descrição                                                                                                                                                                      |
+| ------------ | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `loan_id`    | string | Chave de identificação do empréstimo. **PK**                                                                                                                                   |
+| `account_id` | string | Chave de identificação da conta. **FK** → `account`                                                                                                                            |
+| `date`       | string | Data de concessão do empréstimo, no formato `AAMMDD`.                                                                                                                          |
+| `amount`     | string | Valor do empréstimo.                                                                                                                                                           |
+| `duration`   | string | Duração do empréstimo, em meses.                                                                                                                                               |
+| `payments`   | string | Valor do pagamento mensal.                                                                                                                                                     |
+| `status`     | string | Situação de pagamento do empréstimo: `A` (contrato encerrado, sem dívidas), `B` (encerrado, empréstimo não pago), `C` (em vigor, em dia) ou `D` (em vigor, cliente em débito). |
+
+#### `order`
+
+6.471 registros.
+
+| Campo        | Tipo   | Descrição                                                                                                                           |
+| ------------ | ------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `order_id`   | string | Chave de identificação da ordem. **PK**                                                                                             |
+| `account_id` | string | Chave de identificação da conta emissora. **FK** → `account`                                                                        |
+| `bank_to`    | string | Código do banco destinatário, composto por duas letras.                                                                             |
+| `account_to` | string | Chave de identificação da conta destinatária.                                                                                       |
+| `amount`     | string | Valor debitado da conta.                                                                                                            |
+| `k_symbol`   | string | Propósito do pagamento: `POJISTNE` (seguro), `SIPO` (doméstico), `LEASING` (leasing), `UVER` (empréstimo) ou `" "` (não informado). |
+
+#### `trans`
+
+1.056.320 registros.
+
+| Campo        | Tipo   | Descrição                                                                                                                                                                                                                                                                               |
+| ------------ | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `trans_id`   | string | Chave de identificação da transação. **PK**                                                                                                                                                                                                                                             |
+| `account_id` | string | Chave de identificação da conta. **FK** → `account`                                                                                                                                                                                                                                     |
+| `date`       | string | Data da transação, no formato `AAMMDD`.                                                                                                                                                                                                                                                 |
+| `type`       | string | Tipo de transação: `PRIJEM` (crédito), `VYDAJ` (débito) ou `VYBER` (saque; variação legada de `VYDAJ` para um subconjunto de transações).                                                                                                                                               |
+| `operation`  | string | Modo de realização da transação: `VYBER KARTOU` (saque com cartão), `VKLAD` (depósito em dinheiro), `PREVOD Z UCTU` (transferência recebida, de outro banco), `VYBER` (saque em dinheiro) ou `PREVOD NA UCET` (transferência enviada, para outro banco). Vazio em parte das transações. |
+| `amount`     | string | Valor da transação.                                                                                                                                                                                                                                                                     |
+| `balance`    | string | Saldo da conta após a transação.                                                                                                                                                                                                                                                        |
+| `k_symbol`   | string | Caracterização da transação: `POJISTNE` (seguro), `SLUZBY` (tarifa de emissão de extrato), `UROK` (juros), `SANKC. UROK` (juros de penalidade por saldo negativo), `SIPO` (pagamento doméstico), `DUCHOD` (pensão), `UVER` (pagamento de empréstimo) ou vazio.                          |
+| `bank`       | string | Código do banco parceiro, composto por duas letras (aplicável apenas a transferências).                                                                                                                                                                                                 |
+| `account`    | string | Chave de identificação da conta parceira (aplicável apenas a transferências).                                                                                                                                                                                                           |
 
 #### Diagrama Entidade-Relacionamento (conjunto original)
 O diagrama abaixo descreve o schema original do Berka Dataset (8 tabelas),
-tal como chega na camada Raw/Bronze. A camada Silver reorganiza esse
-schema — ver [Reorganização na Silver](#reorganização-na-silver)
-mais abaixo.
+tal como chega na camada Raw/Bronze.
 
 ```mermaid
 erDiagram
@@ -246,78 +236,105 @@ erDiagram
 
 ### Camada Silver
 
-O schema de origem tem 8 tabelas e uma hierarquia de 4 níveis
-(`district → account/client → disp → card/loan/order/trans`). Para
-simplificar os relacionamentos e reduzir os joins necessários nas etapas
-seguintes (modelagem) — a Silver consolida `disp` + `card` dentro de
-`client`, e `loan` dentro de `account`.
-`district` permanece como tabela dimensão separada (só as colunas
-A1..A16 foram renomeadas), pois um join simples já resolve a relação sem
+O schema de origem tem 8 tabelas e uma hierarquia de 4 níveis (`district → account/client → disp → card/loan/order/trans`). \
+Para simplificar os relacionamentos e reduzir os joins necessários nas etapas seguintes, uniram-se os dados de `disp` e `card` na tabela `client`. \
+O mesmo processo foi realizado com os dados da tabela `loan` em `account`. \
+Já `district` permanece como tabela dimensão separada (só as colunas A1..A16 foram renomeadas), pois um join simples já resolve a relação sem
 introduzir ambiguidade.
 
-Os três merges usados na consolidação são **1:1, sem perda de dado** —
-validado contra os dados reais antes da implementação:
-- todo `client` tem exatamente 1 `disp` (nenhum cliente em mais de uma
-  conta, nenhuma conta com mais de 1 titular ou mais de 1 dependente, e
-  nunca o mesmo `client_id` como titular e dependente da mesma conta);
-- todo `card` pertence a um `disp` do tipo `TITULAR` único (nenhum
-  dependente tem cartão, nenhum titular tem mais de 1 cartão);
-- toda `account` tem no máximo 1 `loan`.
+Para realizar essas alterações foram aplicadas as seguintes validações:
+- todo `client` tem exatamente 1 `disp` (nenhum cliente possui mais de uma conta, nenhuma conta com mais de 1 titular ou mais de 1 dependente, e
+  nunca o mesmo `client_id` como titular e dependente da mesma conta); \
+- todo `card` pertence a um `disp` do tipo `OWNER` (titular) único (nenhum dependente tem cartão, nenhum titular tem mais de 1 cartão); \
+- toda `account` possui no máximo 1 `loan`.
 
-Como resultado, temos:
-- _district_ (77 registros) — colunas A1..A16 renomeadas e tipadas (o `?` de `A12` e `A15` no distrito 69 vira nulo):
-   - district_id (era A1), district_name (A2), region (A3), population (A4),
-     municipalities_under_499 (A5), municipalities_500_1999 (A6),
-     municipalities_2000_9999 (A7), municipalities_over_10000 (A8),
-     cities (A9), urban_population_ratio (A10), average_salary (A11),
-     unemployment_rate_1995 (A12), unemployment_rate_1996 (A13),
-     entrepreneurs_per_1000 (A14), crimes_1995 (A15), crimes_1996 (A16);
-- _client_ (5369 registros; consolida _client_ + _disp_ + _card_):
-   - client_id: Chave de identificação do cliente;
-   - account_id: Chave de identificação da conta (todo cliente pertence a exatamente 1 conta);
-   - relationship_type: Papel do cliente na conta
-   ```
-   {
-      "TITULAR": "Proprietário — único que pode emitir ordens ou contrair empréstimos",
-      "DEPENDENTE": "Dependente"
-   }
-   ```
-   - district_id: Chave de identificação do distrito de residência;
-   - gender: Sexo do cliente ('M'/'F'), derivado de `birth_number`;
-   - birth_date: Data de nascimento, derivada de `birth_number`;
-   - card_id: Chave de identificação do cartão (nulo para os 4477 clientes sem cartão — só titular pode ter);
-   - card_type: Tipo de cartão (nulo se sem cartão)
-   ```
-      'junior', 'classic' e 'gold'
-   ```
-   - card_issued: Data de emissão do cartão (nulo se sem cartão);
-- _account_ (4500 registros; consolida _account_ + _loan_):
-   - account_id: Chave de identificação da conta;
-   - district_id: Chave de identificação do distrito da conta;
-   - frequency: Frequência de emissão do extrato
-   ```
-   {
-      "POPLATEK MESICNE": "Mensal",
-      "POPLATEK TYDNE": "Semanal",
-      "POPLATEK PO OBRATU": "Por transação"
-   }
-   ```
-   - date: Data de criação da conta;
-   - loan_id: Chave de identificação do empréstimo (nulo para as 3818 contas sem empréstimo);
-   - loan_date: Data de concessão do empréstimo (nulo se sem empréstimo);
-   - loan_amount: Valor do empréstimo (nulo se sem empréstimo);
-   - loan_duration: Duração do empréstimo em meses (nulo se sem empréstimo);
-   - loan_payments: Valor do pagamento mensal (nulo se sem empréstimo);
-   - loan_status: Situação de pagamento do empréstimo (nulo se sem empréstimo)
-   ```
-   {
-      "A": "Contrato encerrado, sem dívidas",
-      "B": "Contrato encerrado, empréstimo não pago",
-      "C": "Contrato em vigor, em dia",
-      "D": "Contrato em vigor, cliente em débito"
-   }
-   ```
-- _order_ e _trans_: mesmo schema de origem, só tipadas e com as categóricas traduzidas.
+Como resultado, temos as seguintes tabelas:
+
+#### `district`
+
+77 registros. Tabela dimensão; colunas `A1`..`A16` renomeadas e tipadas (o `?` de `A12` e `A15` no distrito 69 vira nulo).
+
+| Campo                       | Fonte Bronze   | Tipo   | Descrição                                                |
+| --------------------------- | -------------- | ------ | -------------------------------------------------------- |
+| `district_id`               | `district.A1`  | string | Identificador do distrito. **PK**                        |
+| `district_name`             | `district.A2`  | string | Nome do distrito.                                        |
+| `region`                    | `district.A3`  | string | Região.                                                  |
+| `population`                | `district.A4`  | int    | Número de habitantes.                                    |
+| `municipalities_under_499`  | `district.A5`  | int    | Número de municípios com menos de 499 habitantes.        |
+| `municipalities_500_1999`   | `district.A6`  | int    | Número de municípios com 500 a 1999 habitantes.          |
+| `municipalities_2000_9999`  | `district.A7`  | int    | Número de municípios com 2000 a 9999 habitantes.         |
+| `municipalities_over_10000` | `district.A8`  | int    | Número de municípios com mais de 10000 habitantes.       |
+| `cities`                    | `district.A9`  | int    | Número de cidades.                                       |
+| `urban_population_ratio`    | `district.A10` | float  | Proporção de habitantes urbanos.                         |
+| `average_salary`            | `district.A11` | int    | Salário médio.                                           |
+| `unemployment_rate_1995`    | `district.A12` | float  | Taxa de desemprego em 1995. Nula no distrito 69.         |
+| `unemployment_rate_1996`    | `district.A13` | float  | Taxa de desemprego em 1996.                              |
+| `entrepreneurs_per_1000`    | `district.A14` | int    | Número de empreendedores por 1000 habitantes.            |
+| `crimes_1995`               | `district.A15` | int    | Número de crimes cometidos em 1995. Nulo no distrito 69. |
+| `crimes_1996`               | `district.A16` | int    | Número de crimes cometidos em 1996.                      |
+
+#### `client`
+
+5.369 registros. Consolida `client` + `disp` + `card`.
+
+| Campo               | Fonte Bronze                      | Tipo   | Descrição                                                                                                                  |
+| ------------------- | --------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `client_id`         | `client.client_id`                | string | Chave de identificação do cliente. **PK**                                                                                  |
+| `account_id`        | `disp.account_id`                 | string | Conta do cliente (todo cliente pertence a exatamente 1 conta). **FK** → `account`                                          |
+| `relationship_type` | `disp.type`                       | string | Papel do cliente na conta: `TITULAR` (proprietário; único que pode emitir ordens ou contrair empréstimos) ou `DEPENDENTE`. |
+| `district_id`       | `client.district_id`              | string | Distrito de residência. **FK** → `district`                                                                                |
+| `gender`            | Derivado de `client.birth_number` | string | Sexo do cliente (`M`/`F`).                                                                                                 |
+| `birth_date`        | Derivado de `client.birth_number` | date   | Data de nascimento.                                                                                                        |
+| `card_id`           | `card.card_id`                    | string | Chave de identificação do cartão. Nulo para os 4.477 clientes sem cartão (só titular pode ter).                            |
+| `card_type`         | `card.type`                       | string | Tipo de cartão: `junior`, `classic` ou `gold`. Nulo sem cartão.                                                            |
+| `card_issued`       | `card.issued`                     | date   | Data de emissão do cartão. Nula sem cartão.                                                                                |
+
+#### `account`
+
+4.500 registros. Consolida `account` + `loan`.
+
+| Campo           | Fonte Bronze          | Tipo   | Descrição                                                                                                                                                                                              |
+| --------------- | --------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `account_id`    | `account.account_id`  | string | Chave de identificação da conta. **PK**                                                                                                                                                                |
+| `district_id`   | `account.district_id` | string | Distrito da conta. **FK** → `district`                                                                                                                                                                 |
+| `frequency`     | `account.frequency`   | string | Frequência de emissão do extrato: `MENSAL`, `SEMANAL` ou `POR_TRANSACAO`.                                                                                                                              |
+| `date`          | `account.date`        | date   | Data de criação da conta.                                                                                                                                                                              |
+| `loan_id`       | `loan.loan_id`        | string | Chave de identificação do empréstimo. Nulo para as 3.818 contas sem empréstimo.                                                                                                                        |
+| `loan_date`     | `loan.date`           | date   | Data de concessão do empréstimo. Nula sem empréstimo.                                                                                                                                                  |
+| `loan_amount`   | `loan.amount`         | float  | Valor do empréstimo. Nulo sem empréstimo.                                                                                                                                                              |
+| `loan_duration` | `loan.duration`       | int    | Duração do empréstimo, em meses. Nula sem empréstimo.                                                                                                                                                  |
+| `loan_payments` | `loan.payments`       | float  | Valor do pagamento mensal. Nulo sem empréstimo.                                                                                                                                                        |
+| `loan_status`   | `loan.status`         | string | Situação de pagamento do empréstimo: `A` (contrato encerrado, sem dívidas), `B` (encerrado, empréstimo não pago), `C` (em vigor, em dia) ou `D` (em vigor, cliente em débito). Nulo se sem empréstimo. |
+
+#### `order`
+
+6.471 registros. Mesmo schema da origem, tipada e com `k_symbol` traduzido.
+
+| Campo        | Fonte Bronze       | Tipo   | Descrição                                                                                                            |
+| ------------ | ------------------ | ------ | -------------------------------------------------------------------------------------------------------------------- |
+| `order_id`   | `order.order_id`   | string | Chave de identificação da ordem. **PK**                                                                              |
+| `account_id` | `order.account_id` | string | Conta emissora. **FK** → `account`                                                                                   |
+| `bank_to`    | `order.bank_to`    | string | Código do banco destinatário, composto por duas letras.                                                              |
+| `account_to` | `order.account_to` | string | Chave de identificação da conta destinatária.                                                                        |
+| `amount`     | `order.amount`     | float  | Valor debitado da conta.                                                                                             |
+| `k_symbol`   | `order.k_symbol`   | string | Propósito do pagamento: `SEGURO`, `PAGAMENTO_DOMESTICO`, `LEASING` ou `PAGAMENTO_EMPRESTIMO`. Nulo se não informado. |
+
+#### `trans`
+
+1.056.320 registros. Mesmo schema da origem, tipada e com as categóricas traduzidas.
+
+| Campo        | Fonte Bronze       | Tipo   | Descrição                                                                                                                                                     |
+| ------------ | ------------------ | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `trans_id`   | `trans.trans_id`   | string | Chave de identificação da transação. **PK**                                                                                                                   |
+| `account_id` | `trans.account_id` | string | Conta da transação. **FK** → `account`                                                                                                                        |
+| `date`       | `trans.date`       | date   | Data da transação.                                                                                                                                            |
+| `type`       | `trans.type`       | string | Tipo de transação: `CREDITO`, `DEBITO` ou `SAQUE` (variação legada de débito, mantida separada).                                                              |
+| `operation`  | `trans.operation`  | string | Modo de realização: `SAQUE_CARTAO`, `DEPOSITO_DINHEIRO`, `TRANSFERENCIA_RECEBIDA`, `SAQUE_DINHEIRO` ou `TRANSFERENCIA_ENVIADA`. Nulo em parte das transações. |
+| `amount`     | `trans.amount`     | float  | Valor da transação.                                                                                                                                           |
+| `balance`    | `trans.balance`    | float  | Saldo da conta após a transação.                                                                                                                              |
+| `k_symbol`   | `trans.k_symbol`   | string | Caracterização: `SEGURO`, `TARIFA_EXTRATO`, `JUROS`, `JUROS_PENALIDADE`, `PAGAMENTO_DOMESTICO`, `PENSAO` ou `PAGAMENTO_EMPRESTIMO`. Nulo se não informado.    |
+| `bank`       | `trans.bank`       | string | Código do banco parceiro, composto por duas letras. Nulo fora de transferências.                                                                              |
+| `account`    | `trans.account`    | string | Conta parceira. Nula fora de transferências.                                                                                                                  |
 
 Tratamentos aplicados a todas as tabelas (`src/the_bank_project/silver/`):
 - **Tipagem:** datas `AAMMDD` viram `datetime` (século XX), valores numéricos viram `Int64`/`Float64`, ids permanecem texto;
@@ -403,15 +420,22 @@ erDiagram
 ```
 ### Camada Gold
 
-A camada Gold consolida os dados tratados na Silver em estruturas orientadas ao consumo analítico e à geração de features para modelos de aprendizado supervisionado. Os dados são organizados em duas tabelas com granularidades diferentes, ambas com **`account_id` como entidade**: uma visão cadastral da conta e uma visão temporal do seu comportamento financeiro.
+A camada Gold consolida os dados tratados na Silver em estruturas orientadas ao consumo analítico e à geração de features para modelos de aprendizado supervisionado. \
+Os dados são organizados em duas tabelas com granularidades diferentes, ambas com **`account_id` como entidade**:
+- Visão cadastral da conta `gold_account`;
+- Visão temporal do comportamento financeiro `gold_account_monthly_movements`;
 
-**Por que a conta e não o cliente?** O Berka tem 5.369 clientes para 4.500 contas. Os 869 dependentes compartilham a conta do titular e, portanto, a mesma série de transações e o mesmo target. Usá-los como entidade duplicaria observações idênticas e enviesaria as métricas dos modelos. Os atributos do cliente que interessam (sexo e nascimento do titular, cartão) entram como atributos da conta.
-
-A Gold não define os modelos de ML nem seus conjuntos de treinamento. Seu objetivo é disponibilizar dados confiáveis, reutilizáveis e temporalmente consistentes para que diferentes times possam construir suas próprias features, visões analíticas e modelos. O código está em `src/the_bank_project/gold/` (`make gold`) e as tabelas são gravadas em `data/gold/`.
+**Por que a conta e não o cliente?** \
+O Berka tem 5.369 clientes para 4.500 contas. Os 869 dependentes compartilham a conta do titular e, portanto, a mesma série de transações e o mesmo target. \
+Usá-los como entidade duplicaria observações idênticas e enviesaria as métricas dos modelos. \
+Os atributos do cliente que interessam (sexo e nascimento do titular, cartão) entram como atributos da conta. \
+A Gold não define os modelos de ML nem seus conjuntos de treinamento. \
+Seu objetivo é disponibilizar dados confiáveis, reutilizáveis e temporalmente consistentes para que diferentes times possam construir suas próprias features, visões analíticas e modelos. \
+O código está em `src/the_bank_project/gold/` (`make gold`) e as tabelas são gravadas em `data/gold/`.
 
 #### `gold_account`
 
-Uma linha por `account_id` (4.500 registros). Reúne a conta, o distrito da conta, o titular, o cartão e o empréstimo, quando existentes. `account_open_date` é o timestamp da tabela para o Feature Store.
+Esta tabela reúne as informações referentes a conta, ao titular, seu distrito e quando existentes, os dados de empréstimo e cartão.
 
 | Campo                             | Fonte Silver                      | Tipo    | Descrição                                                                                             |
 | --------------------------------- | --------------------------------- | ------- | ----------------------------------------------------------------------------------------------------- |
@@ -445,17 +469,24 @@ Uma linha por `account_id` (4.500 registros). Reúne a conta, o distrito da cont
 | `loan_payment_ratio`              | Derivado                          | float   | Relação entre a parcela mensal e o valor do empréstimo.                                               |
 | `loan_status`                     | `account.loan_status`             | string  | Situação do empréstimo (`A`–`D`). Origem do label de inadimplência, **não é feature**.                |
 
-> **Atenção ao usar os campos `card_*` e `loan_*`:** são atributos estáticos, medidos ao fim do período, e a tabela é datada pela abertura da conta. Um cartão ou empréstimo emitido depois do mês de referência de uma observação **não** estava disponível naquele momento; ao montar datasets de treino, só use esses campos quando `card_issued_date`/`loan_date` forem anteriores ao mês da observação.
+> **Atenção aos campos `card_*` e `loan_*`:** são atributos estáticos, medidos ao fim do período, e a tabela é datada pela abertura da conta.
+> Um cartão ou empréstimo emitido depois do mês de referência de uma observação **não** estava disponível naquele momento;
+> Portanto, é fundamental atenção a campos como `card_issued_date`/`loan_date` para evitar vazamento de dados.
 
 #### `gold_account_monthly_movements`
 
-Uma linha por `account_id` e `reference_month`, agregada de `trans` (1.056.320 transações → 185.326 registros mensais, cobrindo as 4.500 contas entre 1993-01 e 1998-12). Os indicadores cobrem volume, entradas, saídas, saldo, composição das operações e histórico.
+Esta tabela reúne indicadores como volume de movimentações, entradas, saídas, saldo, composição das operações e histórico.
 
-- **`reference_month` é o último dia do mês** (ex.: `1995-03-31`), quando as features do mês ficam completas. É o `event_timestamp` no Feast: uma consulta point-in-time feita em `T` só enxerga meses já encerrados.
-- **Meses sem movimento entram na série**, entre o primeiro e o último mês com transação de cada conta (269 meses, 0,15%), com fluxos e contagens 0 e saldo carregado do mês anterior. Sem isso, `LAG` e as médias móveis olhariam para meses distantes. Os valores mínimo/médio/máximo das transações ficam nulos nesses meses.
-- **Entradas** são as transações do tipo `CREDITO`; **saídas** são `DEBITO` e `SAQUE` (o `VYBER` do tipo, variante legada de débito).
-- **`opening_balance` é uma estimativa.** O `balance` do Berka não fecha como razão contábil (`closing_balance ≠ opening_balance + net_flow` em cerca de 25% dos meses) e o `trans_id` não segue a ordem real dentro do mesmo dia. Por isso, o saldo de abertura/fechamento do dia é resolvido pela cadeia `balance − valor` das próprias transações do dia, e não pelo `trans_id`.
-- Janelas (`*_3m_*`, `*_6m_*`) usam **só o mês de referência e os anteriores**; onde há menos meses que a janela, usam os disponíveis. Variações percentuais são nulas quando o mês anterior é 0 (indefinidas, não infinitas).
+- **`reference_month` é o último dia do mês** (ex.: `1995-03-31`), quando as features do mês ficam completas. \
+É o `event_timestamp` no Feast: uma consulta point-in-time feita em `T` só enxerga meses já encerrados.
+- **Meses sem movimento entram na série**, entre o primeiro e o último mês com transação de cada conta (269 meses, 0,15%), com fluxos e contagens 0 e saldo carregado do mês anterior. \
+Sem isso, `LAG` e as médias móveis olhariam para meses distantes. \
+Os valores mínimo/médio/máximo das transações ficam nulos nesses meses.
+- **Entradas** são as transações do tipo `CREDITO`.
+- **Saídas** são `DEBITO` e `SAQUE` (o `VYBER` do tipo, variante legada de débito).
+- **`opening_balance` é uma estimativa.** O `balance` do Berka não fecha como razão contábil (`closing_balance ≠ opening_balance + net_flow` em cerca de 25% dos meses) e o `trans_id` não segue a ordem real dentro do mesmo dia. \
+Por isso, o saldo de abertura/fechamento do dia é resolvido pela cadeia `balance − valor` das próprias transações do dia, e não pelo `trans_id`.
+- Janelas (`*_3m_*`, `*_6m_*`) usam **só o mês de referência e os anteriores**; onde há menos meses que a janela, usam os disponíveis. Variações percentuais são nulas quando o mês anterior é 0.
 - `leasing_payment_amount`, previsto no desenho original, foi removido: `LEASING` só aparece em `order`, nunca em `trans`.
 
 | Campo                          | Fonte                                   | Descrição                                                    |
@@ -608,40 +639,37 @@ erDiagram
     }
 ```
 
-## Feature Store (Feast)
+## Feature Store
 
-A Gold é servida pelo Feast (`feature_repo/`), que é o **único ponto de acesso às features**: treino e serving passam por `the_bank_project.features`, e nenhum outro módulo lê a Gold diretamente.
+A Gold alimenta a feature store, o **único ponto de acesso às features**. \
+As etapas de treino e serving passam por `the_bank_project.features`, e nenhum outro módulo lê a Gold diretamente.
 
 - **Entidade:** `account` (chave `account_id`).
-- **Offline store:** os parquets de `data/gold/` (usado no treino, com join *point-in-time*). **Online store:** SQLite local em `feature_repo/data/` (usado no serving), carregado com o valor mais recente de cada conta.
-- **Views:** `account_static` (de `gold_account`, timestamp `account_open_date`) e `account_monthly` (de `gold_account_monthly_movements`, timestamp `reference_month`). O schema é explícito em `feature_repo/features.py` e um teste de contrato falha se ele divergir das colunas da Gold.
-- **FeatureService `outflow_regression`:** as features da visão mensal e do histórico usadas pelo modelo de regressão (ver "Modelos Supervisionados"). O target não é uma feature.
-
-```python
-from the_bank_project.features import get_offline_features, get_online_features
-
-# treino: uma linha por (conta, instante); volta o que era conhecido naquele instante
-train = get_offline_features(entity_df)  # colunas: account_id, event_timestamp
-# serving: o mês mais recente de cada conta
-live = get_online_features(["1", "2"])
-```
+- **Offline store:** os parquets de `data/gold/` (usado no treino, com join *point-in-time*).
+- **Online store:** SQLite local em `feature_repo/data/` (usado no serving), carregado com o valor mais recente de cada conta.
+- **Views:** `account_static` (de `gold_account`, timestamp `account_open_date`) e `account_monthly` (de `gold_account_monthly_movements`, timestamp `reference_month`). \
+O schema é explícito em `feature_repo/features.py` e um teste de contrato falha se ele divergir das colunas da Gold.
+- **FeatureService `outflow_regression`:** as features da visão mensal e do histórico usadas pelo modelo de regressão. \
+O target não é uma feature.
 
 Pontos de atenção:
-- **Point-in-time:** como `reference_month` é o fim do mês, uma consulta em `1995-03-30` enxerga fevereiro, não março (há teste para isso).
-- **Sem TTL:** o offline store de arquivos do Feast descarta a linha inteira quando a feature expira, e quebra se todas expirarem. Por isso as views não têm TTL, e o dataset de treino deve partir de pares (conta, mês) reais da Gold, não de datas arbitrárias depois do último mês da conta. Linhas anteriores à abertura da conta não voltam do offline store.
-- **Materialização completa:** `materialize_all` reprocessa o histórico inteiro (idempotente). A janela incremental do Feast é limitada pelo TTL a partir de "agora", e o dataset é de 1993–1998.
-- **Versão do pandas:** o Feast exige `pandas<3`, então o projeto todo está em pandas 2.3 (dev, CI e a imagem do Airflow).
+- **Point-in-time:** como `reference_month` é o fim do mês, uma consulta em `1995-03-30` enxerga fevereiro, não março.
+- **Sem TTL:** o offline store de arquivos do Feast descarta a linha inteira quando a feature expira, e quebra se todas expirarem. \
+Por isso as views não têm TTL, e o dataset de treino deve partir de pares (conta, mês) reais da Gold, não de datas arbitrárias depois do último mês da conta. \
+Linhas anteriores à abertura da conta não voltam do offline store.
+- **Materialização completa:** `materialize_all` reprocessa o histórico inteiro (idempotente). \
+A janela incremental do Feast é limitada pelo TTL a partir de "agora", e o dataset é de 1993–1998.
+- **Versão do pandas:** o Feast exige `pandas<3`, então o projeto todo está em pandas 2.3 (dev, CI, a imagem do Airflow e a da API).
 
 ## Modelos Supervisionados
 
-A partir da camada Gold serão construídos os datasets específicos para treinamento dos modelos. As tabelas Gold fornecem as variáveis observadas e derivadas, enquanto os **targets** são definidos de acordo com cada problema de negócio.
-
+A partir da camada Gold são construídos os datasets específicos para treinamento dos modelos. \
+As tabelas Gold fornecem as variáveis observadas e derivadas, enquanto os **targets** são definidos de acordo com cada problema de negócio. \
 Essa separação permite reutilizar a mesma Gold em diferentes modelos e evita que variáveis que representam o futuro sejam disponibilizadas como features.
 
 ### Modelo de regressão | Gastos do próximo mês
 
 O objetivo deste modelo é prever o valor total de saídas de uma conta no mês seguinte.
-
 Matematicamente:
 
 ```text
@@ -683,9 +711,13 @@ Gradient Boosting
 XGBoost
 ```
 
-A regressão linear é o baseline de modelo; os demais verificam se relações não lineares e interações melhoram as previsões. O "Gradient Boosting" é o `HistGradientBoostingRegressor` do scikit-learn (o `GradientBoostingRegressor` clássico levaria dezenas de minutos neste volume). Junto entram **dois baselines sem treino**, repetir o `outflow_amount` do mês atual e a média dos últimos 3 meses: um modelo só conta se bater o melhor deles (`test_skill_vs_naive` = `1 − MAE/MAE do melhor ingênuo`).
+A regressão linear é o baseline de modelo; os demais verificam se relações não lineares e interações melhoram as previsões. \
+O "Gradient Boosting" é o `HistGradientBoostingRegressor` do scikit-learn (o `GradientBoostingRegressor` clássico levaria dezenas de minutos neste volume). \
+Junto entram **dois baselines sem treino**, repetir o `outflow_amount` do mês atual e a média dos últimos 3 meses: um modelo só conta se bater o melhor deles (`test_skill_vs_naive` = `1 − MAE/MAE do melhor ingênuo`).
 
-**Alvo em `log1p`:** as saídas são muito assimétricas (mediana ~11 mil, máximo ~290 mil). Random Forest, Gradient Boosting e XGBoost treinam em `log1p(y)` e revertem antes de medir, o que reduziu o MAE de validação em ~2% (e piorou RMSE/R² em ~5%, já que o MAE é a métrica principal). A regressão linear **não** usa o log: ela extrapola em `log1p` e o `expm1` explode (MAE de validação 32 mil contra 8 mil sem o log).
+**Alvo em `log1p`:** as saídas são muito assimétricas (mediana ~11 mil, máximo ~290 mil). \
+Random Forest, Gradient Boosting e XGBoost treinam em `log1p(y)` e revertem antes de medir, o que reduziu o MAE de validação em ~2% (e piorou RMSE/R² em ~5%, já que o MAE é a métrica principal). \
+A regressão linear **não** usa o log: ela extrapola em `log1p` e o `expm1` explode (MAE de validação 32 mil contra 8 mil sem o log).
 
 **Métricas observadas:**
 
@@ -695,7 +727,7 @@ RMSE
 R²
 ```
 
-O MAE será utilizado para interpretar diretamente o erro médio de previsão, enquanto o RMSE dará maior peso a erros elevados e o R² permitirá avaliar a capacidade explicativa do modelo.
+O MAE indica diretamente o erro médio de previsão, o RMSE dá maior peso a erros elevados e o R² mede a capacidade explicativa do modelo.
 
 #### Features
 
@@ -774,7 +806,65 @@ Como ler: os três modelos de árvores erram ~20% menos que o melhor ingênuo, e
 
 ---
 
+## Inferência: API e interface
+
+A API (FastAPI) prevê as **saídas totais de uma conta no mês seguinte**, com o modelo `champion` do MLflow e as features do Feast. Ela sobe com o restante da infraestrutura (`make up`, http://localhost:8000) ou localmente (`make serve`, com `MLFLOW_TRACKING_URI` no `.env`). \
+A mesma aplicação serve a **interface web** em `/`, feita para demonstrar o valor do modelo.
+
+### Interface
+
+- **Herói:** o erro médio do modelo no teste contra os demais modelos e contra a regra simples "repetir a média de saídas dos 3 meses".
+- **Laboratório:** o usuário escolhe o mês de referência e até 10 contas (busca pelo número ou "Sortear 5 contas"). Para cada conta, vê o **valor previsto ao lado do valor real**, o erro em Kč e em %, e o erro que a média de 3 meses teria dado. Ao clicar numa conta, aparecem o histórico de 12 meses com o previsto e o real no mês seguinte e **todas as informações que o modelo usou** (29 features, com nomes legíveis e as 5 de maior peso em destaque).
+- **Desempenho geral:** o modelo é recalculado no conjunto de teste inteiro (a cada troca de campeão) e comparado com o baseline: erro médio, previsões a até 20% do real, proporção de contas-mês em que erra menos e um gráfico de dispersão previsto × real. O erro médio recalculado pela API coincide com o do MLflow.
+
+Decisões para a interface não enganar quem a usa:
+- **O mês de referência mostra a que conjunto pertence:** os meses de teste (ago–nov/1998) nunca foram vistos pelo modelo; meses de treino ou validação vêm com o aviso de que o resultado tende a ser otimista. O ponto de partida é o mês de teste mais recente.
+- **Sem valor real no "mais recente":** a opção `dez/1998` prevê `jan/1999`, um mês que o dataset não tem, então só há previsão.
+- **Poucas contas não provam nada:** o modelo erra menos que a média de 3 meses em ~57% das contas-mês, não em todas. Numa amostra de 5 contas o baseline pode ganhar, e a interface diz isso e aponta para o teste inteiro.
+
+### Endpoints
+
+| Endpoint                                | Função                                                                                   |
+| --------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `POST /predict`                         | Previsão em lote (até 100 contas). Contrato público, consumido pelo chat da Etapa 3.     |
+| `GET /health`                           | Campeão carregado e tamanho do catálogo. Responde 503 se não houver `champion`.          |
+| `GET /metrics`                          | Métricas no formato Prometheus.                                                          |
+| `GET /api/model`                        | Campeão, métricas no teste, comparativo com os baselines e features (nome, grupo, peso). |
+| `GET /api/months`, `/api/accounts`      | Meses disponíveis (com o conjunto do treino) e busca/sorteio de contas.                  |
+| `GET /api/accounts/{id}/history`        | Entradas, saídas e saldo até o mês T e o valor real de T+1.                              |
+| `GET /api/evaluation`                   | Desempenho no teste inteiro (calculado em segundo plano após carregar o modelo).         |
+| `GET /docs`                             | Documentação OpenAPI interativa.                                                         |
+
+```bash
+curl -X POST localhost:8000/predict -H 'content-type: application/json' \
+  -d '{"account_ids": ["1", "2"], "reference_month": "1998-11-30"}'
+```
+
+```json
+{
+  "model": {"name": "outflow_regression", "version": "1", "algorithm": "random_forest"},
+  "predictions": [
+    {"account_id": "1", "features_as_of": "1998-11-30", "target_month": "1998-12-31",
+     "predicted_next_month_outflow": 3812.4, "actual_next_month_outflow": 6952.0,
+     "baseline_next_month_outflow": 4803.0, "error": -3139.6, "split": "teste", "features": null}
+  ],
+  "not_found": []
+}
+```
+
+- Sem `reference_month`, a API usa o mês **mais recente** do online store (`features_as_of`) e não devolve valor real. Com ele, as features vêm do offline store no ponto do tempo pedido e o valor real de T+1 vem junto, quando conhecido. \
+  Nos dois caminhos as features e a previsão são idênticas para o mesmo mês (há teste de paridade treino/serving).
+- Contas sem features vão em `not_found`, sem derrubar o lote. `include_features: true` devolve as features usadas.
+- **Troca de campeão sem reiniciar:** a API consulta o alias `champion` a cada 60 s e recarrega o modelo se a versão mudou. Um campeão cujas features divergem das do Feast não substitui o que está rodando.
+- **Métricas Prometheus** (`/metrics`): requisições e latência por rota, previsões geradas, contas sem features, distribuição dos valores previstos e a versão do modelo carregado.
+
+### Limitações
+
+- **Sem autenticação:** é um projeto local.
+- **Features "mais recentes" são de 1998:** o dataset é histórico e as views do Feast não têm TTL. Uma conta parada há meses seria prevista com dados velhos, e por isso a resposta traz `features_as_of`.
+- **Mesmas versões em todo lugar:** a imagem da API e o venv do Airflow são instalados pelo `poetry.lock`, porque o modelo do MLflow é um pickle que só carrega com as versões com que foi treinado.
+
 ### Modelo de classificação | Inadimplência
 
-O objetivo deste modelo é prever se um empréstimo apresentará comportamento de inadimplência.
-TBD
+O objetivo deste modelo é prever se um empréstimo apresentará comportamento de inadimplência. \
+Label, features e métricas ainda serão definidos (Fase 5b do `ROADMAP.md`).

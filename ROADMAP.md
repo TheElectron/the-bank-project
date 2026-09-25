@@ -15,7 +15,7 @@ Legenda: ⬜ não iniciada · 🚧 em andamento · ✅ concluída
 | 3    | Silver → Gold                                                   | 3                   | ✅     |
 | 4    | Feature Store (Feast)                                           | 4                   | ✅     |
 | 5    | Treino, validação e ciclo de vida dos modelos (MLflow)          | 5                   | ✅     |
-| 6    | Inferência via API (FastAPI + Docker)                           | 6                   | ⬜     |
+| 6    | Inferência via API (FastAPI + Docker)                           | 6                   | ✅     |
 | 7    | Monitoramento e re-treino por drift                             | 7                   | ⬜     |
 | 8    | CD e fechamento                                                 | CI/CD               | ⬜     |
 
@@ -32,8 +32,8 @@ Legenda: ⬜ não iniciada · 🚧 em andamento · ✅ concluída
 - **Dependências isoladas:** o Airflow roda só em imagem Docker própria
   (`docker/airflow/`), instalado com os *constraints* oficiais, fora do
   `pyproject.toml`, para evitar conflito com Feast/MLflow/Evidently. O código do projeto roda num venv da
-  própria imagem (`@task.external_python`), com as dependências do `pyproject.toml`: assim
-  as tasks usam as mesmas versões do dev/CI, não as fixadas pelos constraints do Airflow.
+  própria imagem (`@task.external_python`), instalado pelo `poetry.lock`: as tasks usam as mesmas versões
+  do dev, do CI e da API de serving (o modelo do MLflow é um pickle), não as fixadas pelos constraints do Airflow.
 - **Config tipada:** `configs/*.yaml` carregados via Pydantic; nada de paths ou
   credenciais hardcoded (`.env` para segredos, com `.env.example` versionado).
 - **Entidade do projeto é `account_id`** (decisão de 2026-09-23): ver Fase 3.
@@ -127,7 +127,7 @@ Descrito em detalhes no README ("Camada Gold"), **com a mudança de entidade**:
 - **`account_id` como entidade** da tabela mensal (e do Feast). Motivo: 5.369
   clientes para 4.500 contas — ~869 dependentes teriam a mesma série temporal
   e o mesmo target do titular, duplicando observações e enviesando as métricas.
-- A tabela cadastral (hoje `gold_client`) passa a ter grão de conta, com os
+- A tabela cadastral (antes `gold_client`) passou a ter grão de conta, com os
   atributos do titular. Renomear as tabelas (`gold_client` →
   `gold_account`, `gold_client_monthly_movements` →
   `gold_account_monthly_movements`) e **atualizar o README** junto com a fase.
@@ -189,7 +189,7 @@ linear; gate estrito reavaliando os dois modelos no mesmo teste. Resultado e
 ressalvas no README ("Modelo de regressão").
 
 - **Fase 5b (fora do caminho crítico):** modelo de classificação de
-  inadimplência (TBD no README): definir label, features e métricas antes de implementar.
+  inadimplência (a definir no README): definir label, features e métricas antes de implementar.
 
 ## Fase 6 — Inferência via API
 
@@ -198,9 +198,19 @@ ressalvas no README ("Modelo de regressão").
 - Modelo carregado do registry (alias `champion`); features lidas do online store do Feast.
 - Dockerfile em `docker/serving/` e serviço no compose.
 
+Implementado em `src/the_bank_project/serving/` (`app`, `service`, `catalog`, `model_store`,
+`evaluation`, `metrics`, `schemas`, `feature_catalog`), a interface web em `serving/static/`
+(HTML/CSS/JS sem build, gráficos em SVG próprio, fontes embutidas), `docker/serving/` e o serviço
+`serving` no compose (:8000); `make serve` roda local. Além do `/predict` do escopo original:
+modo histórico (`reference_month`) com valor real, `/api/*` de apoio à interface, avaliação no teste
+inteiro recalculada com o campeão e recarga automática do campeão (polling do alias a cada 60 s).
+Imagens da API e do venv do Airflow passaram a instalar pelo `poetry.lock` (o modelo é um pickle).
+
 ## Fase 7 — Monitoramento e re-treino
 
-- Prometheus (scrape do `/metrics`) e Grafana (dashboards provisionados em `monitoring/`).
+- Prometheus (scrape do `/metrics`) e Grafana (dashboards provisionados em `monitoring/`). A API já expõe
+  requisições e latência por rota, previsões geradas, contas sem features, distribuição dos valores
+  previstos e a versão do campeão (`model_info`); faltam os alertas e os dashboards.
 - Evidently: relatórios de drift de dados, gerados por task do Airflow.
 - Performance real é **defasada** (o target só chega no mês seguinte); o drift
   de dados é o gatilho imediato.

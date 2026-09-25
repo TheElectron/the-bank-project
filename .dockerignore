@@ -1,0 +1,12 @@
+.git
+.venv
+.mypy_cache
+.ruff_cache
+.pytest_cache
+**/__pycache__
+data
+feature_repo/data
+notebooks
+tests
+.env
+.coverage
