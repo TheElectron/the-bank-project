@@ -1,4 +1,4 @@
-"""CLI do monitoramento: `python -m the_bank_project.monitoring [drift|push]`."""
+"""CLI do monitoramento: `python -m the_bank_project.monitoring [drift|push|retrain-check]`."""
 
 import argparse
 import logging
@@ -9,6 +9,7 @@ from the_bank_project.config import Settings, load_config
 from the_bank_project.logging_config import configure_logging
 from the_bank_project.monitoring.drift import load_summary, run_drift
 from the_bank_project.monitoring.metrics import push_drift
+from the_bank_project.monitoring.retrain import decide_retrain, load_last_retrain
 
 logger = logging.getLogger(__name__)
 
@@ -17,17 +18,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Executa a etapa pedida. Drift detectado é resultado, não erro: só falha se a etapa quebrar."""
     parser = argparse.ArgumentParser(prog="the_bank_project.monitoring", description="Monitoramento de drift.")
     parser.add_argument(
-        "step", choices=["drift", "push"], nargs="?", default="drift",
-        help="drift: calcula o relatório (e publica, se houver PUSHGATEWAY_URL); push: só publica o último resumo.",
+        "step", choices=["drift", "push", "retrain-check"], nargs="?", default="drift",
+        help="drift: calcula o relatório (e publica, se houver PUSHGATEWAY_URL); push: só publica o último resumo;\n"
+             "retrain-check: mostra a decisão de re-treino sem disparar nem gravar o cooldown.",
     )  # fmt: skip
     args = parser.parse_args(argv)
     configure_logging()
     url = Settings().pushgateway_url
     try:
         cfg = load_config()
+        if args.step == "retrain-check":
+            decide_retrain(cfg, record=False)
+            return 0
         summary = run_drift(cfg) if args.step == "drift" else load_summary(cfg.paths.monitoring)
         if url:
-            push_drift(summary, url)
+            push_drift(summary, url, last_retrain_at=load_last_retrain(cfg.paths.monitoring))
         elif args.step == "push":
             raise ValueError("Defina PUSHGATEWAY_URL (ex.: http://localhost:9091) para publicar o resumo.")
     except Exception:

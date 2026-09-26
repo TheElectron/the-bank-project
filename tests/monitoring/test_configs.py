@@ -25,7 +25,7 @@ def exposed_names() -> set[str]:
         drift_share=0, drift_detected=False, feature_threshold=0.1, drift_share_threshold=0.5,
         features={"a": FeatureDrift(score=0, drifted=False)}, generated_at=datetime.now(UTC),
     )  # fmt: skip
-    families = [*ServingMetrics().registry.collect(), *DriftCollector(summary).collect()]
+    families = [*ServingMetrics().registry.collect(), *DriftCollector(summary, datetime.now(UTC)).collect()]
     return {f.name + s for f in families for s in SUFFIXES.get(f.type, [""])} | {"up"}
 
 

@@ -1,0 +1,53 @@
+name: CD
+
+# Publica as imagens no GHCR só depois que o CI passou em master (workflow_run); também pode ser disparado à mão.
+on:
+  workflow_run:
+    workflows: [CI]
+    branches: [master]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    # workflow_run dispara também com o CI vermelho: só segue se ele passou (o disparo manual sempre segue).
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [airflow, mlflow, serving]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # O GHCR exige o nome em minúsculas.
+      - id: ref
+        run: |
+          echo "repo=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/the-bank-project-${{ matrix.image }}" >> "$GITHUB_OUTPUT"
+          echo "sha=${{ github.event.workflow_run.head_sha || github.sha }}" >> "$GITHUB_OUTPUT"
+      - id: meta
+        run: echo "short=$(echo '${{ steps.ref.outputs.sha }}' | cut -c1-7)" >> "$GITHUB_OUTPUT"
+      # `load: true`: a imagem é construída e testada localmente antes de qualquer push.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/${{ matrix.image }}/Dockerfile
+          load: true
+          tags: |
+            ${{ steps.ref.outputs.repo }}:sha-${{ steps.meta.outputs.short }}
+            ${{ steps.ref.outputs.repo }}:latest
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+      - run: scripts/smoke_image.sh ${{ matrix.image }} ${{ steps.ref.outputs.repo }}:latest
+      - run: docker push --all-tags ${{ steps.ref.outputs.repo }}

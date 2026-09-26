@@ -1,0 +1,25 @@
+# Override que usa as imagens publicadas no GHCR (workflow `cd.yml`) em vez de construí-las:
+#   docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d
+# `make up` continua construindo localmente. GHCR_OWNER: dono do repositório no GitHub; IMAGE_TAG: `latest` ou `sha-<curto>`.
+x-ghcr: &ghcr
+  build: !reset null
+
+services:
+  mlflow:
+    <<: *ghcr
+    image: ghcr.io/${GHCR_OWNER:-theelectron}/the-bank-project-mlflow:${IMAGE_TAG:-latest}
+  serving:
+    <<: *ghcr
+    image: ghcr.io/${GHCR_OWNER:-theelectron}/the-bank-project-serving:${IMAGE_TAG:-latest}
+  airflow-init:
+    <<: *ghcr
+    image: ghcr.io/${GHCR_OWNER:-theelectron}/the-bank-project-airflow:${IMAGE_TAG:-latest}
+  airflow-apiserver:
+    <<: *ghcr
+    image: ghcr.io/${GHCR_OWNER:-theelectron}/the-bank-project-airflow:${IMAGE_TAG:-latest}
+  airflow-scheduler:
+    <<: *ghcr
+    image: ghcr.io/${GHCR_OWNER:-theelectron}/the-bank-project-airflow:${IMAGE_TAG:-latest}
+  airflow-dag-processor:
+    <<: *ghcr
+    image: ghcr.io/${GHCR_OWNER:-theelectron}/the-bank-project-airflow:${IMAGE_TAG:-latest}

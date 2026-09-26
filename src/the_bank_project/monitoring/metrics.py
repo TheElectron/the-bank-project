@@ -6,6 +6,7 @@ Usa um coletor próprio em vez de `Gauge`: importar o Feast liga o modo multipro
 
 import logging
 from collections.abc import Iterator
+from datetime import datetime
 
 from prometheus_client import CollectorRegistry, push_to_gateway
 from prometheus_client.core import GaugeMetricFamily
@@ -21,8 +22,9 @@ JOB = "drift"
 class DriftCollector(Collector):
     """Expõe um `DriftSummary` como gauges (`drift_*`)."""
 
-    def __init__(self, summary: DriftSummary) -> None:
+    def __init__(self, summary: DriftSummary, last_retrain_at: datetime | None = None) -> None:
         self.summary = summary
+        self.last_retrain_at = last_retrain_at
 
     def collect(self) -> Iterator[GaugeMetricFamily]:
         s = self.summary
@@ -50,15 +52,19 @@ class DriftCollector(Collector):
             ts = GaugeMetricFamily("drift_report_timestamp_seconds", "Quando o relatório de drift foi gerado.")
             ts.add_metric([], s.generated_at.timestamp())
             yield ts
+        if self.last_retrain_at is not None:
+            retrain = GaugeMetricFamily("retrain_last_timestamp_seconds", "Quando o drift disparou o último re-treino.")
+            retrain.add_metric([], self.last_retrain_at.timestamp())
+            yield retrain
 
 
-def push_drift(summary: DriftSummary, url: str, timeout: float = 10) -> None:
+def push_drift(summary: DriftSummary, url: str, timeout: float = 10, last_retrain_at: datetime | None = None) -> None:
     """Envia o resumo ao Pushgateway, substituindo o grupo anterior (features removidas somem).
 
     Raises:
         OSError: se o Pushgateway não responder (`URLError` é subclasse).
     """
     registry = CollectorRegistry()
-    registry.register(DriftCollector(summary))
+    registry.register(DriftCollector(summary, last_retrain_at))
     push_to_gateway(url, job=JOB, registry=registry, timeout=timeout)
     logger.info("Resumo de drift publicado em %s (job=%s).", url, JOB)

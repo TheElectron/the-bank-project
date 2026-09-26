@@ -100,6 +100,8 @@ class MonitoringConfig(BaseModel):
         0.1  # uma feature deriva se a distância de Wasserstein (em desvios da referência) passar disso
     )
     drift_share_threshold: float = 0.5  # há drift no dataset se essa fração das features (ou mais) derivar
+    retrain_enabled: bool = True  # se False, o drift nunca dispara o re-treino
+    retrain_cooldown_days: int = 14  # intervalo mínimo entre re-treinos disparados por drift (evita loops)
 
 
 class GlobalConfig(BaseModel):

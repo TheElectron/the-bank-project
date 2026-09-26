@@ -28,3 +28,5 @@ monitoring:
   current_months: 3            # janela "atual" do drift: os N últimos meses da Gold
   feature_threshold: 0.1       # Wasserstein normalizada pelo desvio da referência, por feature
   drift_share_threshold: 0.5   # fração de features com drift a partir da qual há drift no dataset
+  retrain_enabled: true        # se false, o drift nunca dispara o re-treino
+  retrain_cooldown_days: 14    # intervalo mínimo entre re-treinos disparados por drift

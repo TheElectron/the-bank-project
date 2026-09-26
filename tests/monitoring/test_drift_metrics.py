@@ -104,7 +104,7 @@ def test_cli_push_publishes_the_saved_summary(tmp_path: Path, monkeypatch: pytes
     sent: list[tuple[DriftSummary, str]] = []
     monkeypatch.setenv("PUSHGATEWAY_URL", "http://gw:9091")
     monkeypatch.setattr(monitoring_cli, "load_summary", lambda _: make_summary())
-    monkeypatch.setattr(monitoring_cli, "push_drift", lambda s, url: sent.append((s, url)))
+    monkeypatch.setattr(monitoring_cli, "push_drift", lambda s, url, **_: sent.append((s, url)))
     assert monitoring_cli.main(["push"]) == 0
     assert sent == [(make_summary(), "http://gw:9091")]
 

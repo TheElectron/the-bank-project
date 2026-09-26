@@ -16,8 +16,8 @@ Legenda: ⬜ não iniciada · 🚧 em andamento · ✅ concluída
 | 4    | Feature Store (Feast)                                           | 4                   | ✅     |
 | 5    | Treino, validação e ciclo de vida dos modelos (MLflow)          | 5                   | ✅     |
 | 6    | Inferência via API (FastAPI + Docker)                           | 6                   | ✅     |
-| 7    | Monitoramento e re-treino por drift                             | 7                   | 🚧     |
-| 8    | CD e fechamento                                                 | CI/CD               | ⬜     |
+| 7    | Monitoramento e re-treino por drift (7a ✅, 7b ✅, 7c ✅)         | 7                   | ✅     |
+| 8    | CD e fechamento                                                 | CI/CD               | 🚧     |
 
 ## Princípios
 
@@ -151,8 +151,8 @@ O README foi atualizado junto (seção "Camada Gold").
 - `feature_repo/` com `feature_store.yaml`, entidade `account_id` e 2
   `FeatureView`s (cadastral e mensal).
 - Offline store em parquet (`data/gold/`); online store SQLite local.
-- `FeatureService` por modelo (regressão de gastos; classificação de
-  inadimplência terá views/labels próprios).
+- `FeatureService` por modelo (só a regressão de gastos; a
+  classificação de inadimplência saiu do escopo).
 - `feast apply` e `feast materialize` como tasks da DAG.
 - Único ponto de acesso às features para treino e serving (nenhum outro
   módulo lê a Gold diretamente).
@@ -163,7 +163,7 @@ Implementado em `feature_repo/` (definições e `feature_store.yaml`) e
 `pandas<3`, então o projeto todo foi fixado em pandas 2.3 (2026-09-24); views sem
 TTL (o offline store de arquivos descarta/quebra com TTL); materialização
 completa em vez de incremental (dataset histórico). Só o FeatureService da
-regressão existe; o da inadimplência vem com o modelo (Fase 5), e `card_*`/`loan_*`
+regressão existe (a inadimplência saiu do escopo), e `card_*`/`loan_*`
 precisam ser mascarados pela própria data antes de virar feature.
 
 ## Fase 5 — Treino, validação e ciclo de vida (MLflow)
@@ -188,8 +188,8 @@ mês com 1 mês de folga; 2 baselines ingênuos; log1p no alvo exceto na regress
 linear; gate estrito reavaliando os dois modelos no mesmo teste. Resultado e
 ressalvas no README ("Modelo de regressão").
 
-- **Fase 5b (fora do caminho crítico):** modelo de classificação de
-  inadimplência (a definir no README): definir label, features e métricas antes de implementar.
+- O modelo de classificação de inadimplência (antiga Fase 5b) foi **removido do escopo** em 2026-09-25: o projeto
+  cobre só a regressão de gastos do mês seguinte.
 
 ## Fase 6 — Inferência via API
 
@@ -211,11 +211,11 @@ Imagens da API e do venv do Airflow passaram a instalar pelo `poetry.lock` (o mo
 - Prometheus (scrape do `/metrics`) e Grafana (dashboards provisionados em `monitoring/`). A API já expõe
   requisições e latência por rota, previsões geradas, contas sem features, distribuição dos valores
   previstos e a versão do campeão (`model_info`).
-- **Sub-fases:** 7a Prometheus + Grafana (✅) → 7b Evidently → 7c re-treino por drift.
+- **Sub-fases:** 7a Prometheus + Grafana (✅) → 7b Evidently (✅) → 7c re-treino por drift (✅).
 - **7a (implementada):** `prometheus` (:9090) e `grafana` (:3000) no compose; `monitoring/` com `prometheus.yml`,
   `alerts.yml` (5 alertas de infra, sem Alertmanager) e Grafana provisionado (datasource + dashboard "API de
   inferência"); `make monitoring-check` roda o `promtool`; `tests/monitoring/` garante que as métricas citadas existem.
-- **7b (a fazer):** Evidently, relatórios de drift de dados, gerados por task do Airflow (DAG `monitoring`).
+- **7b (implementada):** Evidently, relatórios de drift de dados, gerados por task do Airflow (DAG `monitoring`).
   Decisões de 2026-09-25: o "dado atual" é um **replay temporal** (referência = meses de treino, atual = meses
   mais recentes da Gold, via `the_bank_project.features`); o resumo de drift chega ao Prometheus por
   **Pushgateway**; o painel de drift entra no dashboard nesta sub-fase.
@@ -226,14 +226,46 @@ Imagens da API e do venv do Airflow passaram a instalar pelo `poetry.lock` (o mo
   - **`drift.py` (feito, 2026-09-25):** `the_bank_project.monitoring` (função pura `compute_drift` + `run_drift` + CLI `make drift`),
     saída em `data/monitoring/` (HTML + JSON). Parâmetros: janela atual de 3 meses, Wasserstein > 0,1 por feature, drift no
     dataset com >= 50% das features. Nos dados reais: 12/29 (41%), sem drift, mas perto do limiar (ver README).
-  - **Próximo:** DAG `monitoring` (task `drift_report`), Pushgateway e o painel de drift no Grafana.
+  - **DAG `monitoring` + Pushgateway + painel (feito, 2026-09-25):** DAG semanal `drift_report` → `publish_metrics`;
+    Pushgateway (:9091, volume persistente) no compose; painel "Drift de dados" no dashboard e 2 alertas (`drift_detected`,
+    relatório com mais de 8 dias). Validado ponta a ponta: run manual `success` (~8 min), `drift_share` = 0,41 no Prometheus.
 - Performance real é **defasada** (o target só chega no mês seguinte); o drift
   de dados é o gatilho imediato.
-- **7c (a fazer):** re-treino: o alerta de drift dispara a DAG de treino via API do Airflow,
-  com *cooldown* para evitar loops, e passa pelo mesmo gate de promoção da Fase 5.
+- **7c (implementada e validada, 2026-09-25):** re-treino por drift. Decisão de 2026-09-25:
+  `TriggerDagRunOperator` dentro da própria DAG `monitoring` (em vez da API do Airflow, que exigiria token JWT e
+  uma chamada HTTP; a decisão já acontece nessa DAG) e cooldown de 14 dias.
+  - `the_bank_project.monitoring.retrain`: função pura `should_retrain` (`retrain`/`no_drift`/`cooldown`/`disabled`),
+    estado em `data/monitoring/last_retrain.json` (gravado na decisão) e `make retrain-check` (dry run).
+  - DAG: `drift_report → decide_retrain → (publish_metrics | retrain_needed → trigger_training)`; a `training`
+    precisa estar ativa. O `promote` da `training` é o gate da Fase 5.
+  - Config `monitoring`: `retrain_enabled` (true) e `retrain_cooldown_days` (14). Métrica
+    `retrain_last_timestamp_seconds` e painel "Último re-treino por drift" no Grafana.
+  - 12 testes novos (`tests/monitoring/test_retrain.py`); `make check` com 221 testes.
+  - **Limite conhecido:** com o dataset estático, re-treinar reproduz o mesmo modelo e o gate deve mantê-lo; a fase
+    valida o mecanismo, não um ganho de desempenho.
+  - **Validação ponta a ponta (feita):** com `drift_share_threshold` = 0,3, o 1º run disparou a `training` (gate
+    rejeitou o challenger v3, MAE igual ao do campeão v1, que foi mantido) e o 2º foi bloqueado pelo cooldown
+    (`trigger_training` skipped, nenhum novo run). Config e estado restaurados; a v3 segue como `challenger` no Registry.
 
 ## Fase 8 — CD e fechamento
 
-- `cd.yml`: build e push das imagens (ex.: GHCR) e `docker compose up` local.
-  Sem cloud, "deploy" significa isso; redefinir aqui se isso mudar.
-- Revisão final: README, `CLAUDE.md` e este roadmap refletindo o estado real.
+- **Implementada localmente (2026-09-25); o `cd.yml` só roda de verdade no GitHub, então a fase fica 🚧 até o primeiro
+  run verde.** Sem cloud, "deploy" = publicar as imagens no GHCR e subir o compose local.
+- `.github/workflows/cd.yml`: dispara por `workflow_run` do CI em `master` (só se `conclusion == 'success'`) e por
+  `workflow_dispatch`. Matrix `airflow | mlflow | serving`: build (cache do GHA) → smoke test → push para
+  `ghcr.io/<dono>/the-bank-project-<imagem>` com as tags `sha-<curto>` e `latest`. O push só acontece depois do smoke.
+- `scripts/smoke_image.sh`: o essencial de cada imagem importa/sobe (Airflow: `the_bank_project` e `evidently` no venv;
+  MLflow: `--version`; API: `import the_bank_project.serving`). Não sobe a stack: a API precisa da Gold e do Feast, que
+  não existem num runner de CI (o `dag-check` do CI já cobre as DAGs).
+- `docker-compose.ghcr.yml`: override que troca `build` pelas imagens do GHCR
+  (`docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d`; `GHCR_OWNER`, `IMAGE_TAG`). `make up`
+  continua construindo localmente.
+- `make cd-check`: valida o override (`docker compose config`) e roda o smoke nas imagens locais.
+- `tests/cd/`: contrato entre a matrix, os `Dockerfile`, o compose, o override e o smoke script (12 testes).
+- Decisões: `workflow_run` (não `push`, que publicaria com CI vermelho); GHCR com `GITHUB_TOKEN`, sem segredos
+  novos; pacotes nascem privados (torná-los públicos é decisão do dono); sem Trivy.
+- **Falta:** o primeiro run do `cd.yml` no GitHub (confirmar o push no GHCR e o `pull` pelo override); depois, marcar
+  a fase como ✅.
+- **Revisão final (feita, 2026-09-25):** README, `CLAUDE.md` e este roadmap refletem o estado real; a Fase 5b saiu do
+  escopo. Limites conhecidos: o dataset é estático (o re-treino por drift valida o mecanismo, não um ganho de
+  desempenho); sem Alertmanager; sem autenticação na API (projeto local).

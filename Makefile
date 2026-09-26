@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install lint format typecheck test check hooks ingest silver gold features labels train promote drift serve up down dag-check monitoring-check clean
+.PHONY: help install lint format typecheck test check hooks ingest silver gold features labels train promote drift retrain-check serve up down dag-check monitoring-check cd-check clean
 
 help:  ## Lista os comandos
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -50,6 +50,9 @@ promote:  ## Gate: challenger vira champion só se superar o atual
 drift:  ## Relatório de drift (Evidently): treino x últimos meses da Gold, em data/monitoring/
 	poetry run python -m the_bank_project.monitoring drift
 
+retrain-check:  ## Decisão de re-treino por drift com o último resumo (não dispara nem grava o cooldown)
+	poetry run python -m the_bank_project.monitoring retrain-check
+
 serve:  ## API de inferência local em http://localhost:8000 (precisa de MLFLOW_TRACKING_URI no .env)
 	poetry run python -m the_bank_project.serving
 
@@ -64,6 +67,10 @@ dag-check:  ## Valida que as DAGs importam (dentro da imagem do Airflow)
 
 monitoring-check:  ## Valida prometheus.yml e alerts.yml com o promtool (Docker)
 	docker run --rm --entrypoint promtool -v $$(pwd)/monitoring:/etc/prometheus:ro prom/prometheus:v3.5.0 check config /etc/prometheus/prometheus.yml
+
+cd-check:  ## Valida o override do GHCR e faz o smoke test das imagens locais (as do `make up`)
+	docker compose -f docker-compose.yml -f docker-compose.ghcr.yml config --quiet
+	@for n in airflow mlflow serving; do scripts/smoke_image.sh $$n the-bank-project-$$n:latest; done
 
 clean:  ## Remove caches
 	rm -rf .pytest_cache .mypy_cache .ruff_cache .coverage htmlcov

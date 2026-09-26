@@ -19,9 +19,9 @@ Interface via Makefile (`make help`):
 - Qualidade: `install`, `lint`, `format`, `typecheck`, `test`, `check` (= o que o CI roda), `hooks`, `clean`.
 - Dados: `ingest` (Kaggle → Raw → Bronze), `silver`, `gold`, `features` (Feast apply + materialize).
 - Modelo: `labels`, `train`, `promote` (gate do MLflow).
-- Monitoramento: `drift` (Evidently: treino x últimos meses da Gold, saída em `data/monitoring/`).
+- Monitoramento: `drift` (Evidently: treino x últimos meses da Gold, saída em `data/monitoring/`), `retrain-check` (decisão de re-treino, sem efeito colateral).
 - Serving: `serve` (API + interface em :8000, local; precisa de `MLFLOW_TRACKING_URI` no `.env`).
-- Infra Docker: `up`/`down` (Airflow :8080, MLflow :5000, API :8000, Prometheus :9090 e Grafana :3000), `dag-check` (valida as DAGs na imagem do Airflow), `monitoring-check` (promtool sobre `monitoring/`).
+- Infra Docker: `up`/`down` (Airflow :8080, MLflow :5000, API :8000, Prometheus :9090, Pushgateway :9091 e Grafana :3000), `dag-check` (valida as DAGs na imagem do Airflow), `monitoring-check` (promtool sobre `monitoring/`), `cd-check` (override do GHCR + smoke das imagens).
 
 # Estilo de código
 
@@ -42,6 +42,8 @@ Interface via Makefile (`make help`):
   deve existir em `serving/metrics.py` (teste de contrato em `tests/monitoring/`). Sem Alertmanager (infra local).
 - Drift em `the_bank_project.monitoring` (`drift.py` puro + CLI; Evidently no grupo `monitoring` do Poetry, telemetria desligada via `DO_NOT_TRACK`).
   Parâmetros em `monitoring:` da config; drift detectado não é erro (a DAG decide).
+  DAG `monitoring` (semanal): `drift_report` → `publish_metrics` (resumo ao Pushgateway, `PUSHGATEWAY_URL`); painel de drift no dashboard do Grafana.
+  Re-treino: `decide_retrain` (função pura `should_retrain` + cooldown de 14 dias em `data/monitoring/last_retrain.json`) → `TriggerDagRunOperator` para a DAG `training`; o gate de promoção segue sendo o único caminho para o campeão.
 - Registry do MLflow por **aliases** (`challenger`/`champion`), não stages. Promoção só pelo gate (`make promote`).
 - Nome de experimento/run no MLflow: `<etapa>_<modelo>_<data>`.
 - Reutilizar bibliotecas reconhecidas em vez de reimplementar.
@@ -50,5 +52,6 @@ Interface via Makefile (`make help`):
 
 - Rodar `make check` após mudanças relevantes.
 - Apenas o usuário faz commits; ao final de cada mudança, sugerir a mensagem em Conventional Commits (`feat:`, `fix:`, `chore:`, `docs:`, `experiment:`).
-- Infra 100% local via Docker; não assumir cloud.
+- Infra 100% local via Docker; não assumir cloud. CD (`cd.yml`): publica as imagens no GHCR via `workflow_run` do CI verde em `master`, depois do smoke
+  (`scripts/smoke_image.sh`); `docker-compose.ghcr.yml` as usa no lugar do build. Teste de contrato em `tests/cd/`. Não há classificador de inadimplência (fora do escopo).
 - Fim de fase: atualizar README, este arquivo e o status no ROADMAP.

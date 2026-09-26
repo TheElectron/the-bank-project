@@ -12,7 +12,7 @@ O fluxo é orquestrado via Airflow, iniciando com o download dos arquivos brutos
 
 ![Representação esquemática do pipeline desenvolvido](architecture_diagram.png)
 
-O diagrama mostra a arquitetura-alvo: do monitoramento (Fase 7 do `ROADMAP.md`), Prometheus e Grafana já estão no ar; o drift (Evidently) e o re-treino automático ainda não foram implementados.
+O diagrama mostra a arquitetura-alvo: do monitoramento (Fase 7 do `ROADMAP.md`), Prometheus, Grafana e o drift (Evidently, via DAG `monitoring` e Pushgateway) já estão no ar; o re-treino por drift (7c) também, validado ponta a ponta no Airflow. O CI/CD (Fase 8) está descrito em "Entrega (CI/CD)", no fim deste arquivo.
 
 Cada etapa do pipeline é idempotente (reexecutar sobrescreve o resultado, sem duplicar nada) e pode ser executada individualmente, via Makefile:
 
@@ -26,9 +26,11 @@ Cada etapa do pipeline é idempotente (reexecutar sobrescreve o resultado, sem d
 | `make train`     | Treina os candidatos e registra o vencedor como `challenger` no MLflow                          |
 | `make promote`   | O `challenger` se torna `champion` caso supere os resultados do modelo atual                    |
 | `make drift`     | Relatório de drift (Evidently): treino x últimos meses da Gold, em `data/monitoring/`            |
+| `make retrain-check` | Mostra a decisão de re-treino por drift com o último resumo (não dispara nem grava o cooldown) |
 | `make serve`     | API de inferência e interface web, localmente (http://localhost:8000)                           |
 | `make up`/`down` | Sobe e derruba o Airflow (:8080), o MLflow (:5000), a API (:8000), o Prometheus (:9090) e o Grafana (:3000), via Docker |
 | `make monitoring-check` | Valida `prometheus.yml` e `alerts.yml` com o `promtool` (Docker)                    |
+| `make cd-check`  | Valida o override do GHCR e faz o smoke test das imagens locais                                 |
 | `make check`     | Lint, type check e testes                                                                       |
 
 Nota: para baixar os arquivos brutos, as credenciais do Kaggle precisam estar no arquivo `.env`, conforme o modelo em `.env.example`.
@@ -866,22 +868,18 @@ curl -X POST localhost:8000/predict -H 'content-type: application/json' \
 - **Features "mais recentes" são de 1998:** o dataset é histórico e as views do Feast não têm TTL. Uma conta parada há meses seria prevista com dados velhos, e por isso a resposta traz `features_as_of`.
 - **Mesmas versões em todo lugar:** a imagem da API e o venv do Airflow são instalados pelo `poetry.lock`, porque o modelo do MLflow é um pickle que só carrega com as versões com que foi treinado.
 
-### Modelo de classificação | Inadimplência
-
-O objetivo deste modelo é prever se um empréstimo apresentará comportamento de inadimplência. \
-Label, features e métricas ainda serão definidos (Fase 5b do `ROADMAP.md`).
-
 ## Monitoramento
 
-Com `make up`, o **Prometheus** (http://localhost:9090) faz scrape do `/metrics` da API a cada 15 s e o **Grafana** (http://localhost:3000, visualização sem login; `admin`/`admin` para editar) já abre com o dashboard "API de inferência" provisionado a partir de `monitoring/`, sem configuração manual.
+Com `make up`, o **Prometheus** (http://localhost:9090) faz scrape do `/metrics` da API a cada 15 s e o **Grafana** (http://localhost:3000, visualização sem login; `admin`/`admin` para editar) já abre com o dashboard "Monitoramento: API e drift" provisionado a partir de `monitoring/`, sem configuração manual.
 
 | Bloco do dashboard | O que mostra                                                                                          |
 | ------------------ | ----------------------------------------------------------------------------------------------------- |
 | Visão geral        | API no ar, versão/algoritmo do campeão, idade do campeão carregado e requisições/s.                   |
 | Tráfego e latência | Requisições/s por rota, latência p50/p95 por rota e taxa de erros 5xx.                                |
 | Previsões          | Previsões e chamadas por modo, fração de contas sem features e distribuição dos valores previstos.    |
+| Drift de dados     | Veredito do dataset, fração e contagem de features com drift, idade do relatório e top 10 scores.     |
 
-Alertas (`monitoring/alerts.yml`, visíveis em http://localhost:9090/alerts): API fora do ar, nenhum campeão carregado, 5xx acima de 5%, p95 do `/predict` acima de 1 s e mais de 20% das contas sem features. Não há Alertmanager: a infra é local e não haveria para onde notificar.
+Alertas (`monitoring/alerts.yml`, visíveis em http://localhost:9090/alerts): API fora do ar, nenhum campeão carregado, 5xx acima de 5%, p95 do `/predict` acima de 1 s mais de 20% das contas sem features, drift detectado na última execução e relatório de drift com mais de 8 dias. Não há Alertmanager: a infra é local e não haveria para onde notificar.
 
 Os testes (`tests/monitoring/`) garantem que todo nome de métrica usado nos alertas e no dashboard existe em `ServingMetrics`, para que renomear uma métrica na API não quebre o painel em silêncio.
 
@@ -896,8 +894,33 @@ Os testes (`tests/monitoring/`) garantem que todo nome de métrica usado nos ale
 | `drift_share_threshold`                          | 0,5   | Há drift no dataset se 50% das features (ou mais) derivam.                                   |
 
 - **Replay temporal:** o dataset é histórico e a API não persiste requisições, então o "dado atual" é simulado: a referência são os meses de treino e validação (o que o modelo viu) e a janela atual, os últimos meses. Se a janela invadir a referência, o comando falha em vez de comparar dados iguais.
-- **Drift não é erro:** o comando só falha se a etapa quebrar. Quem decide o que fazer com o resultado é a DAG (Fase 7c).
+- **Drift não é erro:** o comando só falha se a etapa quebrar. Quem decide o que fazer com o resultado é a DAG (ver "Re-treino por drift" abaixo).
+- **DAG `monitoring` (Airflow, semanal + disparo manual):** `drift_report` roda `run_drift` e `publish_metrics` envia o resumo ao **Pushgateway** (`PUSHGATEWAY_URL`, definida no compose), de onde o Prometheus o coleta (job `drift`, `honor_labels`). O Pushgateway persiste em volume, então o último resumo sobrevive a um restart. Pressupõe o `data_pipeline` já executado (labels e Feast). `python -m the_bank_project.monitoring push` publica o último resumo sem recalcular.
 - **Resultado nos dados reais (1993-01..1998-06 x 1998-09..1998-11):** 12 de 29 features (41%) derivaram, logo abaixo do limiar, então **não há drift no dataset**. As que derivam são quase todas de nível (saldos, contagens de transações, valores de transferências), esperado num banco cujos saldos crescem ao longo dos anos; as de variação e as de entradas ficam estáveis. Com a margem tão curta, uma janela ou um limiar diferentes mudariam o veredito.
 - **Amostras pequenas geram drift falso:** com poucas linhas, o ruído amostral sozinho passa de 0,1. Nos dados reais a janela tem ~13 mil linhas, sem esse problema.
 
-O envio do resumo ao Prometheus (Pushgateway), a DAG `monitoring` e o re-treino por drift ainda estão por vir (Fase 7b/7c do `ROADMAP.md`).
+Métricas publicadas: `drift_detected`, `drift_share`, `drift_features_drifted`, `drift_report_timestamp_seconds` e `drift_feature_score{feature=...}`. `retrain_last_timestamp_seconds` (quando o drift disparou o último re-treino; só existe depois do primeiro disparo).
+
+### Re-treino por drift
+
+Na DAG `monitoring`, depois do `drift_report`, a task `decide_retrain` aplica `should_retrain` (função pura em `the_bank_project.monitoring.retrain`) ao último resumo. Se retornar `retrain`, a task `trigger_training` (`TriggerDagRunOperator`) dispara a DAG `training`, cujo `promote` é o mesmo gate da Fase 5: o campeão só muda se o challenger tiver MAE menor no mesmo teste.
+
+| Decisão     | Quando                                                                              |
+| ----------- | ----------------------------------------------------------------------------------- |
+| `retrain`   | Há drift no dataset e o último disparo foi há `retrain_cooldown_days` (14) ou mais. |
+| `no_drift`  | O drift do dataset está abaixo do limiar.                                           |
+| `cooldown`  | Há drift, mas o último disparo foi há menos de 14 dias.                             |
+| `disabled`  | `monitoring.retrain_enabled: false`.                                                |
+
+- **Cooldown em disco:** o disparo é registrado em `data/monitoring/last_retrain.json` (não no banco do Airflow, inacessível à task do venv) e o cooldown é gravado na decisão, não após o disparo. Se o disparo falhar, o próximo só ocorre depois do cooldown, ou apagando esse arquivo. `make retrain-check` mostra a decisão sem gravar nada.
+- **A DAG `training` precisa estar ativa (unpaused):** senão o run disparado fica na fila.
+- **Limite do replay temporal:** o dataset é estático e o split é cronológico fixo, então re-treinar reproduz, em essência, o mesmo modelo e o gate tende a mantê-lo. A 7c valida o mecanismo (gatilho, cooldown e gate), não um ganho de desempenho; com dados novos de verdade o mesmo fluxo passaria a fazer sentido. O drift também não some após o re-treino, então sem o cooldown o gatilho dispararia toda semana.
+- **Validação ponta a ponta (2026-09-25, `drift_share_threshold` = 0,3 para forçar o drift, 41% >= 30%):** o 1º run da DAG `monitoring` decidiu `retrain`, gravou o cooldown, publicou `retrain_last_timestamp_seconds` e disparou a `training`, que treinou o challenger v3 e o gate o **rejeitou** (`6477.51 vs campeão 6477.51`: o mesmo modelo, como previsto), mantendo o campeão v1. O 2º run, minutos depois, decidiu `cooldown`: `trigger_training` ficou `skipped` e nenhum novo run de `training` foi criado. Depois a config e o estado (`last_retrain.json`) foram restaurados. A v3 segue no Registry com o alias `challenger`. Decisão e cooldown também têm testes unitários (`tests/monitoring/test_retrain.py`).
+
+## Entrega (CI/CD)
+
+- **CI** (`.github/workflows/ci.yml`): lint, formatação, mypy, testes com cobertura e `dag-check` a cada push em `master` e em PRs.
+- **CD** (`.github/workflows/cd.yml`): quando o CI passa em `master` (`workflow_run`, ou disparo manual), constrói as imagens `airflow`, `mlflow` e `serving`, faz um smoke test de cada uma (`scripts/smoke_image.sh`) e só então as publica no **GHCR** (`ghcr.io/<dono>/the-bank-project-<imagem>`, tags `sha-<curto>` e `latest`). Sem cloud, "deploy" é isso mais o compose local.
+- **Rodar com as imagens publicadas:** `docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d` (`GHCR_OWNER` e `IMAGE_TAG` ajustam dono e tag). `make up` continua construindo localmente. Os pacotes nascem privados no GitHub; é preciso `docker login ghcr.io` ou torná-los públicos.
+- **Verificação local:** `make cd-check` valida o override e roda o smoke nas imagens locais; `tests/cd/` garante que a matrix, os `Dockerfile`, o compose e o override falam dos mesmos nomes.
+- **Limites:** o smoke test não sobe a stack (a API precisa da Gold e do Feast, ausentes num runner de CI). O `cd.yml` ainda não rodou no GitHub: o primeiro run confirma o push no GHCR.

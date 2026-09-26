@@ -770,6 +770,50 @@
         }
       },
       "description": "Distância de Wasserstein (em desvios da referência). Acima de drift_feature_threshold (0,1 por padrão) a feature tem drift."
+    },
+    {
+      "id": 21,
+      "type": "stat",
+      "title": "Último re-treino por drift",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 36,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "time() - retrain_last_timestamp_seconds",
+          "legendFormat": "",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "nunca"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "textMode": "auto"
+      },
+      "description": "Tempo desde o último disparo do re-treino pelo drift (cooldown de 14 dias). \"nunca\" = ainda não disparou."
     }
   ]
 }
