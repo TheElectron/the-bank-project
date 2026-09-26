@@ -16,7 +16,7 @@ Legenda: ⬜ não iniciada · 🚧 em andamento · ✅ concluída
 | 4    | Feature Store (Feast)                                           | 4                   | ✅     |
 | 5    | Treino, validação e ciclo de vida dos modelos (MLflow)          | 5                   | ✅     |
 | 6    | Inferência via API (FastAPI + Docker)                           | 6                   | ✅     |
-| 7    | Monitoramento e re-treino por drift                             | 7                   | ⬜     |
+| 7    | Monitoramento e re-treino por drift                             | 7                   | 🚧     |
 | 8    | CD e fechamento                                                 | CI/CD               | ⬜     |
 
 ## Princípios
@@ -210,11 +210,26 @@ Imagens da API e do venv do Airflow passaram a instalar pelo `poetry.lock` (o mo
 
 - Prometheus (scrape do `/metrics`) e Grafana (dashboards provisionados em `monitoring/`). A API já expõe
   requisições e latência por rota, previsões geradas, contas sem features, distribuição dos valores
-  previstos e a versão do campeão (`model_info`); faltam os alertas e os dashboards.
-- Evidently: relatórios de drift de dados, gerados por task do Airflow.
+  previstos e a versão do campeão (`model_info`).
+- **Sub-fases:** 7a Prometheus + Grafana (✅) → 7b Evidently → 7c re-treino por drift.
+- **7a (implementada):** `prometheus` (:9090) e `grafana` (:3000) no compose; `monitoring/` com `prometheus.yml`,
+  `alerts.yml` (5 alertas de infra, sem Alertmanager) e Grafana provisionado (datasource + dashboard "API de
+  inferência"); `make monitoring-check` roda o `promtool`; `tests/monitoring/` garante que as métricas citadas existem.
+- **7b (a fazer):** Evidently, relatórios de drift de dados, gerados por task do Airflow (DAG `monitoring`).
+  Decisões de 2026-09-25: o "dado atual" é um **replay temporal** (referência = meses de treino, atual = meses
+  mais recentes da Gold, via `the_bank_project.features`); o resumo de drift chega ao Prometheus por
+  **Pushgateway**; o painel de drift entra no dashboard nesta sub-fase.
+  - **Dependência (feito, 2026-09-25):** `evidently>=0.7.23,<0.8` no grupo `monitoring` do `pyproject.toml`. Resolve
+    sem conflito com `pandas<3`/Feast (só +30 pacotes, nenhuma versão existente mudou). Dev/CI e o venv do Airflow
+    instalam o grupo (`--only main,monitoring`); a imagem da API não. Evidently envia telemetria de uso a menos que
+    `DO_NOT_TRACK` esteja definida: desligar no código/compose.
+  - **`drift.py` (feito, 2026-09-25):** `the_bank_project.monitoring` (função pura `compute_drift` + `run_drift` + CLI `make drift`),
+    saída em `data/monitoring/` (HTML + JSON). Parâmetros: janela atual de 3 meses, Wasserstein > 0,1 por feature, drift no
+    dataset com >= 50% das features. Nos dados reais: 12/29 (41%), sem drift, mas perto do limiar (ver README).
+  - **Próximo:** DAG `monitoring` (task `drift_report`), Pushgateway e o painel de drift no Grafana.
 - Performance real é **defasada** (o target só chega no mês seguinte); o drift
   de dados é o gatilho imediato.
-- Re-treino: o alerta de drift dispara a DAG de treino via API do Airflow,
+- **7c (a fazer):** re-treino: o alerta de drift dispara a DAG de treino via API do Airflow,
   com *cooldown* para evitar loops, e passa pelo mesmo gate de promoção da Fase 5.
 
 ## Fase 8 — CD e fechamento

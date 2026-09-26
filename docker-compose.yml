@@ -1,4 +1,4 @@
-# Infra local (100% Docker). Cresce a cada fase; Airflow (Fase 1b; roda também o Feast, Fase 4), MLflow (Fase 5) e a API de inferência (Fase 6).
+# Infra local (100% Docker). Cresce a cada fase; Airflow (Fase 1b; roda também o Feast, Fase 4), MLflow (Fase 5), a API de inferência (Fase 6) Prometheus + Pushgateway + Grafana (Fase 7).
 x-airflow-common: &airflow-common
   build:
     context: .
@@ -19,6 +19,8 @@ x-airflow-common: &airflow-common
     AIRFLOW__API_AUTH__JWT_SECRET: local-dev-only-jwt-secret-change-me-32b
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
     MLFLOW_TRACKING_URI: http://mlflow:5000
+    PUSHGATEWAY_URL: http://pushgateway:9091
+    DO_NOT_TRACK: "1"  # sem telemetria de uso do Evidently
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - ./src:/opt/airflow/src
@@ -79,6 +81,48 @@ services:
       retries: 10
       start_period: 40s
 
+  pushgateway:
+    image: prom/pushgateway:v1.11.1
+    # Persistência em volume: o resumo de drift sobrevive a um restart (o job só roda de tempos em tempos).
+    command:
+      - --persistence.file=/data/metrics.db
+      - --persistence.interval=1m
+    volumes:
+      - pushgateway-data:/data
+    ports:
+      - "9091:9091"
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      - serving
+      - pushgateway
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    environment:
+      # Só local: dashboards visíveis sem login (admin/admin para editar).
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
   airflow-init:
     <<: *airflow-common
     command: ["bash", "-c", "airflow db migrate"]
@@ -114,3 +158,6 @@ volumes:
   mlflow-data:
   postgres-data:
   airflow-logs:
+  pushgateway-data:
+  prometheus-data:
+  grafana-data:

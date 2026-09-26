@@ -11,7 +11,7 @@ COPY pyproject.toml poetry.lock README.md ./
 COPY src ./src
 RUN python -m venv /opt/airflow/venv \
     && /opt/airflow/venv/bin/pip install --no-cache-dir "poetry>=2,<3" \
-    && VIRTUAL_ENV=/opt/airflow/venv /opt/airflow/venv/bin/poetry install --only main --no-interaction
+    && VIRTUAL_ENV=/opt/airflow/venv /opt/airflow/venv/bin/poetry install --only main,monitoring --no-interaction
 WORKDIR /opt/airflow
 
 # O docker-compose monta ./src em /opt/airflow/src. PYTHONPATH vem antes do

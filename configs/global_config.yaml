@@ -23,3 +23,8 @@ serving:
   max_batch: 100
   model_poll_seconds: 60
   history_months: 12
+
+monitoring:
+  current_months: 3            # janela "atual" do drift: os N últimos meses da Gold
+  feature_threshold: 0.1       # Wasserstein normalizada pelo desvio da referência, por feature
+  drift_share_threshold: 0.5   # fração de features com drift a partir da qual há drift no dataset

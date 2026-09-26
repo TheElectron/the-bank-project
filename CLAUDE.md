@@ -19,8 +19,9 @@ Interface via Makefile (`make help`):
 - Qualidade: `install`, `lint`, `format`, `typecheck`, `test`, `check` (= o que o CI roda), `hooks`, `clean`.
 - Dados: `ingest` (Kaggle → Raw → Bronze), `silver`, `gold`, `features` (Feast apply + materialize).
 - Modelo: `labels`, `train`, `promote` (gate do MLflow).
+- Monitoramento: `drift` (Evidently: treino x últimos meses da Gold, saída em `data/monitoring/`).
 - Serving: `serve` (API + interface em :8000, local; precisa de `MLFLOW_TRACKING_URI` no `.env`).
-- Infra Docker: `up`/`down` (Airflow :8080, MLflow :5000 e API :8000), `dag-check` (valida as DAGs na imagem do Airflow).
+- Infra Docker: `up`/`down` (Airflow :8080, MLflow :5000, API :8000, Prometheus :9090 e Grafana :3000), `dag-check` (valida as DAGs na imagem do Airflow), `monitoring-check` (promtool sobre `monitoring/`).
 
 # Estilo de código
 
@@ -37,6 +38,10 @@ Interface via Makefile (`make help`):
   não lê a Gold; features só via `FeatureReader`. Interface em
   `serving/static/` sem build (JS puro, textos sempre via `textContent`). Imagens da API e do venv do Airflow
   instalam pelo `poetry.lock` (o modelo do MLflow é um pickle).
+- Monitoramento em `monitoring/` (`prometheus.yml`, `alerts.yml`, Grafana provisionado em `grafana/`): todo nome de métrica usado nos alertas/dashboard
+  deve existir em `serving/metrics.py` (teste de contrato em `tests/monitoring/`). Sem Alertmanager (infra local).
+- Drift em `the_bank_project.monitoring` (`drift.py` puro + CLI; Evidently no grupo `monitoring` do Poetry, telemetria desligada via `DO_NOT_TRACK`).
+  Parâmetros em `monitoring:` da config; drift detectado não é erro (a DAG decide).
 - Registry do MLflow por **aliases** (`challenger`/`champion`), não stages. Promoção só pelo gate (`make promote`).
 - Nome de experimento/run no MLflow: `<etapa>_<modelo>_<data>`.
 - Reutilizar bibliotecas reconhecidas em vez de reimplementar.

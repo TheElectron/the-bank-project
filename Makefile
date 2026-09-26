@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install lint format typecheck test check hooks ingest silver gold features labels train promote serve up down dag-check clean
+.PHONY: help install lint format typecheck test check hooks ingest silver gold features labels train promote drift serve up down dag-check monitoring-check clean
 
 help:  ## Lista os comandos
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -47,10 +47,13 @@ train:  ## Treina os candidatos, registra o challenger no MLflow
 promote:  ## Gate: challenger vira champion só se superar o atual
 	poetry run python -m the_bank_project.training promote
 
+drift:  ## Relatório de drift (Evidently): treino x últimos meses da Gold, em data/monitoring/
+	poetry run python -m the_bank_project.monitoring drift
+
 serve:  ## API de inferência local em http://localhost:8000 (precisa de MLFLOW_TRACKING_URI no .env)
 	poetry run python -m the_bank_project.serving
 
-up:  ## Sobe Airflow (:8080), MLflow (:5000) e a API de inferência (:8000)
+up:  ## Sobe Airflow (:8080), MLflow (:5000), API (:8000), Prometheus (:9090) e Grafana (:3000)
 	AIRFLOW_UID=$$(id -u) docker compose up -d --build
 
 down:  ## Derruba a infra local
@@ -58,6 +61,9 @@ down:  ## Derruba a infra local
 
 dag-check:  ## Valida que as DAGs importam (dentro da imagem do Airflow)
 	AIRFLOW_UID=$$(id -u) docker compose run --rm --no-deps --build -e AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=sqlite:////tmp/dagcheck.db airflow-scheduler python /opt/airflow/scripts/check_dags.py
+
+monitoring-check:  ## Valida prometheus.yml e alerts.yml com o promtool (Docker)
+	docker run --rm --entrypoint promtool -v $$(pwd)/monitoring:/etc/prometheus:ro prom/prometheus:v3.5.0 check config /etc/prometheus/prometheus.yml
 
 clean:  ## Remove caches
 	rm -rf .pytest_cache .mypy_cache .ruff_cache .coverage htmlcov

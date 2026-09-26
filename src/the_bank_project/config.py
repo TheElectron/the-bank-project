@@ -40,6 +40,10 @@ class PathsConfig(BaseModel):
     def gold(self) -> Path:
         return self._resolve("gold")
 
+    @property
+    def monitoring(self) -> Path:
+        return self._resolve("monitoring")
+
 
 class KaggleConfig(BaseModel):
     """Origem dos dados brutos."""
@@ -88,6 +92,16 @@ class ServingConfig(BaseModel):
     history_months: int = 12  # meses de histórico no detalhe da conta
 
 
+class MonitoringConfig(BaseModel):
+    """Drift de dados (Evidently): referência = meses de treino/validação, atual = últimos meses da Gold."""
+
+    current_months: int = 3  # tamanho da janela "atual" (replay temporal: o dataset é histórico)
+    feature_threshold: float = (
+        0.1  # uma feature deriva se a distância de Wasserstein (em desvios da referência) passar disso
+    )
+    drift_share_threshold: float = 0.5  # há drift no dataset se essa fração das features (ou mais) derivar
+
+
 class GlobalConfig(BaseModel):
     """Configuração global, espelho de `configs/global_config.yaml`."""
 
@@ -96,6 +110,7 @@ class GlobalConfig(BaseModel):
     feast: FeastConfig = FeastConfig()
     training: TrainingConfig = TrainingConfig()
     serving: ServingConfig = ServingConfig()
+    monitoring: MonitoringConfig = MonitoringConfig()
 
 
 class Settings(BaseSettings):
@@ -108,6 +123,7 @@ class Settings(BaseSettings):
     kaggle_key: str | None = None
     kaggle_api_token: str | None = None
     mlflow_tracking_uri: str | None = None
+    pushgateway_url: str | None = None  # Pushgateway do Prometheus; sem ele o resumo de drift não é publicado
 
 
 def load_config(path: Path | None = None) -> GlobalConfig:

@@ -1,0 +1,59 @@
+# Alertas de infra da API. Sem Alertmanager (infra local, sem destino de notificação):
+# ficam visíveis em http://localhost:9090/alerts e no painel de alertas do Grafana.
+groups:
+  - name: serving
+    rules:
+      - alert: ServingDown
+        expr: up{job="serving"} == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "A API de inferência não responde ao scrape há 1 minuto."
+
+      - alert: NoChampionLoaded
+        expr: absent(model_info)
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "Nenhum modelo com o alias 'champion' carregado (/predict responde 503). Rode o treino e o gate."
+
+      - alert: HighServerErrorRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m]))
+            / sum(rate(http_requests_total[5m])) > 0.05
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Mais de 5% das requisições terminam em 5xx nos últimos 5 minutos."
+
+      - alert: HighPredictLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(http_request_duration_seconds_bucket{path="/predict"}[5m]))) > 1
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "p95 do /predict acima de 1 s nos últimos 5 minutos."
+
+      - alert: HighAccountsNotFoundRate
+        expr: |
+          sum(rate(predict_accounts_not_found_total[10m]))
+            / (sum(rate(predict_accounts_not_found_total[10m])) + sum(rate(predictions_total[10m]))) > 0.2
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Mais de 20% das contas pedidas ao /predict estão sem features (online store desatualizada?)."
+
+  - name: drift
+    rules:
+      - alert: DataDriftDetected
+        expr: drift_detected == 1
+        labels: {severity: warning}
+        annotations:
+          summary: "Drift de dados detectado na última execução (painel \"Drift de dados\" e data/monitoring/drift_report.html)."
+
+      - alert: DriftReportStale
+        expr: time() - drift_report_timestamp_seconds > 8 * 24 * 3600
+        labels: {severity: warning}
+        annotations:
+          summary: "O relatório de drift não é atualizado há mais de 8 dias (a DAG `monitoring` é semanal)."

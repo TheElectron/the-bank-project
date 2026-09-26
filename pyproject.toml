@@ -25,7 +25,7 @@ dependencies = [
 # constraints oficiais, para não conflitar com Feast/MLflow/Evidently. Tudo o mais
 # (ingestão, Feast, treino e serving) é dependência principal: as imagens da API e do
 # venv do Airflow instalam pelo poetry.lock, então as versões são as mesmas em todo lugar.
-# Evidently (Fase 7) entra aqui quando o monitoramento for implementado.
+# Evidently (Fase 7b) fica no grupo `monitoring`: dev/CI e o venv do Airflow instalam; a imagem da API (--only main) não.
 
 [tool.poetry]
 packages = [{ include = "the_bank_project", from = "src" }]
@@ -39,6 +39,9 @@ mypy = ">=1.11.0"
 pre-commit = ">=3.7.0"
 types-pyyaml = ">=6.0.0"
 ipykernel = ">=6.29.0"
+
+[tool.poetry.group.monitoring.dependencies]
+evidently = ">=0.7.23,<0.8"
 
 [build-system]
 requires = ["poetry-core>=2.0.0"]

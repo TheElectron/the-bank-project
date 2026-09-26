@@ -12,7 +12,7 @@ O fluxo é orquestrado via Airflow, iniciando com o download dos arquivos brutos
 
 ![Representação esquemática do pipeline desenvolvido](architecture_diagram.png)
 
-O diagrama mostra a arquitetura-alvo: o monitoramento (Fase 7 do `ROADMAP.md`) ainda não foi implementado.
+O diagrama mostra a arquitetura-alvo: do monitoramento (Fase 7 do `ROADMAP.md`), Prometheus e Grafana já estão no ar; o drift (Evidently) e o re-treino automático ainda não foram implementados.
 
 Cada etapa do pipeline é idempotente (reexecutar sobrescreve o resultado, sem duplicar nada) e pode ser executada individualmente, via Makefile:
 
@@ -25,8 +25,10 @@ Cada etapa do pipeline é idempotente (reexecutar sobrescreve o resultado, sem d
 | `make labels`    | Labels do modelo de regressão (`next_month_outflow`) a partir da Gold                           |
 | `make train`     | Treina os candidatos e registra o vencedor como `challenger` no MLflow                          |
 | `make promote`   | O `challenger` se torna `champion` caso supere os resultados do modelo atual                    |
+| `make drift`     | Relatório de drift (Evidently): treino x últimos meses da Gold, em `data/monitoring/`            |
 | `make serve`     | API de inferência e interface web, localmente (http://localhost:8000)                           |
-| `make up`/`down` | Sobe e derruba o Airflow (:8080), o MLflow (:5000) e a API de inferência (:8000), via Docker |
+| `make up`/`down` | Sobe e derruba o Airflow (:8080), o MLflow (:5000), a API (:8000), o Prometheus (:9090) e o Grafana (:3000), via Docker |
+| `make monitoring-check` | Valida `prometheus.yml` e `alerts.yml` com o `promtool` (Docker)                    |
 | `make check`     | Lint, type check e testes                                                                       |
 
 Nota: para baixar os arquivos brutos, as credenciais do Kaggle precisam estar no arquivo `.env`, conforme o modelo em `.env.example`.
@@ -868,3 +870,34 @@ curl -X POST localhost:8000/predict -H 'content-type: application/json' \
 
 O objetivo deste modelo é prever se um empréstimo apresentará comportamento de inadimplência. \
 Label, features e métricas ainda serão definidos (Fase 5b do `ROADMAP.md`).
+
+## Monitoramento
+
+Com `make up`, o **Prometheus** (http://localhost:9090) faz scrape do `/metrics` da API a cada 15 s e o **Grafana** (http://localhost:3000, visualização sem login; `admin`/`admin` para editar) já abre com o dashboard "API de inferência" provisionado a partir de `monitoring/`, sem configuração manual.
+
+| Bloco do dashboard | O que mostra                                                                                          |
+| ------------------ | ----------------------------------------------------------------------------------------------------- |
+| Visão geral        | API no ar, versão/algoritmo do campeão, idade do campeão carregado e requisições/s.                   |
+| Tráfego e latência | Requisições/s por rota, latência p50/p95 por rota e taxa de erros 5xx.                                |
+| Previsões          | Previsões e chamadas por modo, fração de contas sem features e distribuição dos valores previstos.    |
+
+Alertas (`monitoring/alerts.yml`, visíveis em http://localhost:9090/alerts): API fora do ar, nenhum campeão carregado, 5xx acima de 5%, p95 do `/predict` acima de 1 s e mais de 20% das contas sem features. Não há Alertmanager: a infra é local e não haveria para onde notificar.
+
+Os testes (`tests/monitoring/`) garantem que todo nome de métrica usado nos alertas e no dashboard existe em `ServingMetrics`, para que renomear uma métrica na API não quebre o painel em silêncio.
+
+### Drift de dados
+
+`make drift` compara, com o **Evidently**, as features que o modelo viu com as dos meses mais recentes e grava em `data/monitoring/` um relatório HTML (`drift_report.html`) e um resumo (`drift_summary.json`). As features vêm do Feast, pelo mesmo caminho do treino.
+
+| Parâmetro (`monitoring` em `global_config.yaml`) | Valor | Significado                                                                                  |
+| ------------------------------------------------ | ----- | -------------------------------------------------------------------------------------------- |
+| `current_months`                                 | 3     | Janela "atual": os 3 últimos meses da Gold (ago–nov/1998 já é teste; ver "Modelo de regressão"). |
+| `feature_threshold`                              | 0,1   | Uma feature deriva se a distância de Wasserstein, em desvios da referência, passa de 0,1.    |
+| `drift_share_threshold`                          | 0,5   | Há drift no dataset se 50% das features (ou mais) derivam.                                   |
+
+- **Replay temporal:** o dataset é histórico e a API não persiste requisições, então o "dado atual" é simulado: a referência são os meses de treino e validação (o que o modelo viu) e a janela atual, os últimos meses. Se a janela invadir a referência, o comando falha em vez de comparar dados iguais.
+- **Drift não é erro:** o comando só falha se a etapa quebrar. Quem decide o que fazer com o resultado é a DAG (Fase 7c).
+- **Resultado nos dados reais (1993-01..1998-06 x 1998-09..1998-11):** 12 de 29 features (41%) derivaram, logo abaixo do limiar, então **não há drift no dataset**. As que derivam são quase todas de nível (saldos, contagens de transações, valores de transferências), esperado num banco cujos saldos crescem ao longo dos anos; as de variação e as de entradas ficam estáveis. Com a margem tão curta, uma janela ou um limiar diferentes mudariam o veredito.
+- **Amostras pequenas geram drift falso:** com poucas linhas, o ruído amostral sozinho passa de 0,1. Nos dados reais a janela tem ~13 mil linhas, sem esse problema.
+
+O envio do resumo ao Prometheus (Pushgateway), a DAG `monitoring` e o re-treino por drift ainda estão por vir (Fase 7b/7c do `ROADMAP.md`).
