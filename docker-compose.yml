@@ -70,6 +70,7 @@ services:
     volumes:
       - ./feature_repo:/app/feature_repo
       - ./data/gold:/app/data/gold:ro
+      - ./data/monitoring:/app/data/monitoring:ro  # resumo de drift (DAG `monitoring`) para a interface
     ports:
       - "8000:8000"
     depends_on:

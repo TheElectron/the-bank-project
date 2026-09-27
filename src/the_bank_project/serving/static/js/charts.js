@@ -228,29 +228,65 @@ export function scatterChart(container, { points, key, axisMax, onCount }) {
 }
 
 /* ---------- barras por mês de teste: modelo x média de 3 meses ---------- */
-export function monthBars(container, months) {
+/* ---------- barras pareadas (modelo x média de 3 meses): por mês de teste ou por faixa de gasto ---------- */
+function pairedBars(container, items, ariaLabel) {
   return mount(container, (W) => {
-    const H = 270, m = { t: 22, r: 10, b: 34, l: 52 };
-    const max = Math.max(...months.flatMap((r) => [r.model_mae, r.baseline_mae]));
+    const H = 270, m = { t: 22, r: 10, b: 44, l: 52 };
+    const max = Math.max(...items.flatMap((r) => [r.model, r.baseline]));
     const { top, ticks } = niceTicks(max * 1.05);
     const y = scale(0, top, H - m.b, m.t);
-    const band = (W - m.l - m.r) / months.length;
+    const band = (W - m.l - m.r) / items.length;
     const bw = Math.max(10, Math.min(46, band * 0.3));
-    const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Erro médio por mês de teste" });
+    const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": ariaLabel });
     yAxis(root, ticks, y, m.l, W - m.r);
-    months.forEach((r, i) => {
+    items.forEach((r, i) => {
       const cx = m.l + band * (i + 0.5), x0 = cx - bw - 1;
-      root.append(svg("path", { d: roundedTop(x0, y(r.model_mae), bw, y(0) - y(r.model_mae)), class: "bar s-pred", style: { "--i": i } }));
-      root.append(svg("path", { d: roundedTop(x0 + bw + 2, y(r.baseline_mae), bw, y(0) - y(r.baseline_mae)), class: "bar s-base", style: { "--i": i } }));
-      root.append(svg("text", { x: x0 + bw / 2, y: y(r.model_mae) - 6, "text-anchor": "middle", class: "lbl" }, num(r.model_mae)));
-      root.append(svg("text", { x: x0 + bw * 1.5 + 2, y: y(r.baseline_mae) - 6, "text-anchor": "middle", class: "lbl-soft" }, num(r.baseline_mae)));
-      root.append(svg("text", { x: cx, y: H - m.b + 20, "text-anchor": "middle" }, monthLabel(r.month)));
-      const hit = svg("rect", { x: m.l + band * i + 2, y: m.t, width: band - 4, height: H - m.b - m.t, class: "hit", tabindex: 0, "aria-label": `${monthLabel(r.month)}: modelo ${num(r.model_mae)}, média de 3 meses ${num(r.baseline_mae)}` });
-      const rows = [{ label: "Modelo", value: money(r.model_mae), color: "var(--series-1)" }, { label: "Média de 3 meses", value: money(r.baseline_mae), color: "var(--baseline)" }];
-      const foot = `${pct(1 - r.model_mae / r.baseline_mae)} menos erro · ${num(r.n)} contas`;
-      hit.addEventListener("pointermove", (e) => tip.show(e.clientX, e.clientY, monthLabel(r.month), rows, foot));
+      root.append(svg("path", { d: roundedTop(x0, y(r.model), bw, y(0) - y(r.model)), class: "bar s-pred", style: { "--i": i } }));
+      root.append(svg("path", { d: roundedTop(x0 + bw + 2, y(r.baseline), bw, y(0) - y(r.baseline)), class: "bar s-base", style: { "--i": i } }));
+      root.append(svg("text", { x: x0 + bw / 2, y: y(r.model) - 6, "text-anchor": "middle", class: "lbl" }, num(r.model)));
+      root.append(svg("text", { x: x0 + bw * 1.5 + 2, y: y(r.baseline) - 6, "text-anchor": "middle", class: "lbl-soft" }, num(r.baseline)));
+      root.append(svg("text", { x: cx, y: H - m.b + 20, "text-anchor": "middle" }, r.label));
+      if (r.sub) root.append(svg("text", { x: cx, y: H - m.b + 34, "text-anchor": "middle", class: "lbl-sub" }, r.sub));
+      const hit = svg("rect", { x: m.l + band * i + 2, y: m.t, width: band - 4, height: H - m.b - m.t, class: "hit", tabindex: 0, "aria-label": `${r.label}: modelo ${num(r.model)}, média de 3 meses ${num(r.baseline)}` });
+      const rows = [{ label: "Modelo", value: money(r.model), color: "var(--series-1)" }, { label: "Média de 3 meses", value: money(r.baseline), color: "var(--baseline)" }];
+      const foot = `${r.baseline ? (r.model <= r.baseline ? `${pct(1 - r.model / r.baseline)} menos erro` : `${pct(r.model / r.baseline - 1)} mais erro`) : ""} · ${num(r.n)} contas`;
+      hit.addEventListener("pointermove", (e) => tip.show(e.clientX, e.clientY, r.label, rows, foot));
       hit.addEventListener("pointerleave", () => tip.hide());
       root.append(hit);
+    });
+    return root;
+  });
+}
+
+export function monthBars(container, months) {
+  const items = months.map((r) => ({ label: monthLabel(r.month), model: r.model_mae, baseline: r.baseline_mae, n: r.n }));
+  return pairedBars(container, items, "Erro médio por mês de teste");
+}
+
+/** Rótulo curto de uma faixa de gasto (em milhares de Kč), para caber no eixo. */
+export function bandLabel(b) {
+  const k = (v) => num(v / 1000);
+  if (b.upper == null) return `> ${k(b.lower)} mil`;
+  return b.lower === 0 ? `< ${k(b.upper)} mil` : `${k(b.lower)}–${k(b.upper)} mil`;
+}
+
+export function bandBars(container, bands) {
+  const items = bands.map((b) => ({ label: bandLabel(b), sub: `${num(b.n)} contas`, model: b.model_mae, baseline: b.baseline_mae, n: b.n }));
+  return pairedBars(container, items, "Erro médio por faixa de gasto");
+}
+
+/* ---------- importância das features: barras horizontais, as mais pesadas em azul ---------- */
+export function importanceChart(container, rows) {
+  return mount(container, (W) => {
+    const rowH = 30, m = { t: 4, r: 56, b: 4, l: Math.min(210, W * 0.54) };
+    const H = rows.length * rowH + m.t + m.b;
+    const x = scale(0, Math.max(...rows.map((r) => r.value)), 0, W - m.l - m.r);
+    const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Importância das features no modelo" });
+    rows.forEach((r, i) => {
+      const cy = m.t + i * rowH + rowH / 2;
+      root.append(svg("text", { x: m.l - 12, y: cy + 4, "text-anchor": "end", class: r.hot ? "lbl" : "" }, r.label));
+      root.append(svg("rect", { x: m.l, y: cy - 7, width: Math.max(2, x(r.value)), height: 14, rx: 4, class: `hbar ${r.hot ? "s-pred" : "s-gray"}`, style: { "--i": i } }));
+      root.append(svg("text", { x: m.l + x(r.value) + 8, y: cy + 4, class: r.hot ? "lbl" : "lbl-soft" }, pct(r.value, 1)));
     });
     return root;
   });

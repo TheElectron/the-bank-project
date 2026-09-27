@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install lint format typecheck test check hooks ingest silver gold features labels train promote drift retrain-check serve up down dag-check monitoring-check cd-check clean
+.PHONY: help install lint format typecheck test check hooks ingest silver gold features labels train tune promote drift retrain-check serve up down dag-check monitoring-check cd-check clean
 
 help:  ## Lista os comandos
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -43,6 +43,9 @@ labels:  ## Labels do modelo (next_month_outflow) a partir da Gold
 
 train:  ## Treina os candidatos, registra o challenger no MLflow
 	poetry run python -m the_bank_project.training train
+
+tune:  ## Tuning de hiperparâmetros (Optuna + CV temporal), grava configs/best_params.yaml
+	poetry run python -m the_bank_project.training tune
 
 promote:  ## Gate: challenger vira champion só se superar o atual
 	poetry run python -m the_bank_project.training promote

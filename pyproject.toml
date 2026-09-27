@@ -26,6 +26,7 @@ dependencies = [
 # (ingestão, Feast, treino e serving) é dependência principal: as imagens da API e do
 # venv do Airflow instalam pelo poetry.lock, então as versões são as mesmas em todo lugar.
 # Evidently (Fase 7b) fica no grupo `monitoring`: dev/CI e o venv do Airflow instalam; a imagem da API (--only main) não.
+# Optuna (Fase 9a) fica no grupo `tuning`: só dev/CI (`make tune`); o treino em produção lê `configs/best_params.yaml`.
 
 [tool.poetry]
 packages = [{ include = "the_bank_project", from = "src" }]
@@ -42,6 +43,9 @@ ipykernel = ">=6.29.0"
 
 [tool.poetry.group.monitoring.dependencies]
 evidently = ">=0.7.23,<0.8"
+
+[tool.poetry.group.tuning.dependencies]
+optuna = ">=4,<5"
 
 [build-system]
 requires = ["poetry-core>=2.0.0"]

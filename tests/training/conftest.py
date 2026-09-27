@@ -1,7 +1,10 @@
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
 
+from the_bank_project.training import tuned_params
 from the_bank_project.training.dataset import Dataset
 
 N_MONTHS, N_ACCOUNTS = 24, 40
@@ -29,3 +32,9 @@ def dataset() -> Dataset:  # imutável: os testes que alteram o alvo trabalham e
 @pytest.fixture(autouse=True)
 def _isolated_tracking(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_best_params(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """O `best_params.yaml` real do repositório não pode influenciar os testes."""
+    monkeypatch.setattr(tuned_params, "CONFIGS_DIR", tmp_path / "configs")

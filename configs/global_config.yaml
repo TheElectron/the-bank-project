@@ -14,9 +14,15 @@ training:
   registered_model: outflow_regression
   feature_service: outflow_regression
   split: {train_frac: 0.70, val_frac: 0.20, gap_months: 1}
-  n_tuning_trials: 8
+  n_tuning_trials: 8           # sorteios por modelo quando NÃO há configs/best_params.yaml (ver `tuning`)
   log_target: true
   seed: 42
+
+tuning:                        # `make tune`: Optuna + validação cruzada temporal só nos meses de treino
+  n_trials: 30
+  cv_folds: 4
+  timeout_minutes: 20          # por modelo
+  best_params_file: best_params.yaml
 
 serving:
   port: 8000

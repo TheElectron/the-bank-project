@@ -24,6 +24,7 @@ Cada etapa do pipeline é idempotente (reexecutar sobrescreve o resultado, sem d
 | `make features`  | Feast: registra as views e carrega o online store                                               |
 | `make labels`    | Labels do modelo de regressão (`next_month_outflow`) a partir da Gold                           |
 | `make train`     | Treina os candidatos e registra o vencedor como `challenger` no MLflow                          |
+| `make tune`      | Tuning de hiperparâmetros (Optuna + CV temporal), grava `configs/best_params.yaml`             |
 | `make promote`   | O `challenger` se torna `champion` caso supere os resultados do modelo atual                    |
 | `make drift`     | Relatório de drift (Evidently): treino x últimos meses da Gold, em `data/monitoring/`            |
 | `make retrain-check` | Mostra a decisão de re-treino por drift com o último resumo (não dispara nem grava o cooldown) |
@@ -801,6 +802,21 @@ Para cada modelo, 8 configurações de hiperparâmetros sorteadas (além da padr
 
 Como ler: os três modelos de árvores erram ~20% menos que o melhor ingênuo, e a linear só empata com ele no teste. **A diferença entre Random Forest, XGBoost e Gradient Boosting é pequena (menos de 2,5% no MAE)** e não foi testada estatisticamente; a escolha do Random Forest pela validação é uma vantagem de ~0,8% sobre o XGBoost, que não deve ser tratada como definitiva. O R² de 0,57 mostra que boa parte da variação mensal das saídas não é explicada pelas features atuais. O teste tem só 4 meses (1998-08 a 1998-11).
 
+#### Tuning de hiperparâmetros (Fase 9a, 2026-09-26)
+
+`make tune` busca hiperparâmetros com o **Optuna** (TPE) e validação cruzada temporal: 4 dobras de janela expansiva, por mês, **só dentro dos meses de treino** (a validação fica limpa para escolher o campeão e o teste, intocado), com a mesma folga de 1 mês do split. Cada modelo compara o melhor achado com a configuração padrão **nas mesmas dobras** e, se nada a bate, mantém a padrão. O resultado vai para `configs/best_params.yaml`, que o `make train` passa a usar no lugar do sorteio simples (sem o arquivo, ele volta ao sorteio). Limite de 30 tentativas e 20 min por modelo.
+
+| Modelo            | CV MAE padrão | CV MAE ajustado | Ganho | Tentativas | MAE validação (antes → depois) | MAE teste (antes → depois) |
+| ----------------- | ------------- | --------------- | ----- | ---------- | ------------------------------ | -------------------------- |
+| Random Forest     | 6.010         | 5.974           | 0,6%  | 13 (teto de tempo) | 7.059 → 7.041          | 6.478 → 6.492              |
+| Gradient Boosting | 6.147         | 6.124           | 0,4%  | 30         | 7.232 → 7.236                  | 6.637 → 6.637              |
+| XGBoost           | 6.080         | 6.019           | 1,0%  | 30         | 7.112 → 7.115                  | 6.557 → 6.521              |
+
+- **O ganho é pequeno e não passa para o teste de forma consistente:** o CV melhora 0,4–1,0%, mas o MAE de teste varia entre −0,5% e +0,2%, dentro do ruído de um teste de 4 meses. O **campeão não mudou**: o challenger v4 (Random Forest ajustado, MAE de teste 6.492) perdeu no gate para o v1 (6.478).
+- **Leitura:** com estas features, o erro parece limitado pelos dados e não pelos hiperparâmetros. Os três algoritmos ficam a ~1% um do outro, e o tuning move cada um menos do que essa distância. Ganhos maiores tendem a vir de features (mais defasagens, sazonalidade) e não de mais busca.
+- **Bordas do espaço:** no XGBoost, `learning_rate` (0,020) e `max_depth` (9) ficaram nos limites da busca; ampliar o espaço poderia dar mais alguma coisa, mas o ganho esperado é da mesma ordem do ruído.
+- **Comparação justa:** os números de "antes" são da execução de 2026-09-24 (sorteio simples); os de "depois", do `train` com o `best_params.yaml`.
+
 #### Ciclo de vida no MLflow
 
 - **Experimento** `regressao_outflow`; **runs** `treino_<modelo>_<data>` (mais um run aninhado por configuração testada). Todos logam as mesmas métricas (`val_*` e `test_*`: MAE, RMSE e R²).
@@ -817,9 +833,11 @@ A mesma aplicação serve a **interface web** em `/`, feita para demonstrar o va
 
 ### Interface
 
+- **Navegação:** cabeçalho fixo com âncoras (Visão geral, Modelo, Laboratório, Desempenho); o item da seção visível fica destacado e as seções que dependem de dados (Modelo, Desempenho) só aparecem quando eles chegam.
 - **Herói:** o erro médio do modelo no teste contra os demais modelos e contra a regra simples "repetir a média de saídas dos 3 meses".
 - **Laboratório:** o usuário escolhe o mês de referência e até 10 contas (busca pelo número ou "Sortear 5 contas"). Para cada conta, vê o **valor previsto ao lado do valor real**, o erro em Kč e em %, e o erro que a média de 3 meses teria dado. Ao clicar numa conta, aparecem o histórico de 12 meses com o previsto e o real no mês seguinte e **todas as informações que o modelo usou** (29 features, com nomes legíveis e as 5 de maior peso em destaque).
-- **Desempenho geral:** o modelo é recalculado no conjunto de teste inteiro (a cada troca de campeão) e comparado com o baseline: erro médio, previsões a até 20% do real, proporção de contas-mês em que erra menos e um gráfico de dispersão previsto × real. O erro médio recalculado pela API coincide com o do MLflow.
+- **Modelo (Fase 9b):** o cartão do campeão (algoritmo, versão, data do treino, janelas de treino/validação/teste e hiperparâmetros do run, com a origem: ajustados pelo `make tune` ou sorteio simples), a importância das 10 features mais pesadas e por grupo (com tabela equivalente) e a **saúde dos dados**: último relatório de drift (features com drift contra o limite, as que mais mudaram, janelas comparadas) e a data do último re-treino disparado por ele.
+- **Desempenho geral:** o modelo é recalculado no conjunto de teste inteiro (a cada troca de campeão) e comparado com o baseline: erro médio, previsões a até 20% do real, proporção de contas-mês em que erra menos e um gráfico de dispersão previsto × real. O erro médio recalculado pela API coincide com o do MLflow. Também mostra o **erro por faixa de gasto** (valor real do mês seguinte: até 5 mil, 5–10, 10–20, 20–50 e acima de 50 mil), que evidencia onde o erro em Kč se concentra.
 
 Decisões para a interface não enganar quem a usa:
 - **O mês de referência mostra a que conjunto pertence:** os meses de teste (ago–nov/1998) nunca foram vistos pelo modelo; meses de treino ou validação vêm com o aviso de que o resultado tende a ser otimista. O ponto de partida é o mês de teste mais recente.
@@ -833,7 +851,8 @@ Decisões para a interface não enganar quem a usa:
 | `POST /predict`                         | Previsão em lote (até 100 contas). Contrato público, consumido pelo chat da Etapa 3.     |
 | `GET /health`                           | Campeão carregado e tamanho do catálogo. Responde 503 se não houver `champion`.          |
 | `GET /metrics`                          | Métricas no formato Prometheus.                                                          |
-| `GET /api/model`                        | Campeão, métricas no teste, comparativo com os baselines e features (nome, grupo, peso). |
+| `GET /api/model`                        | Campeão, métricas no teste, comparativo com os baselines, features (nome, grupo, peso), hiperparâmetros, origem deles e data do treino. |
+| `GET /api/monitoring`                   | Último relatório de drift e último re-treino disparado por ele (`available: false` se ainda não rodou). Não depende do campeão. |
 | `GET /api/months`, `/api/accounts`      | Meses disponíveis (com o conjunto do treino) e busca/sorteio de contas.                  |
 | `GET /api/accounts/{id}/history`        | Entradas, saídas e saldo até o mês T e o valor real de T+1.                              |
 | `GET /api/evaluation`                   | Desempenho no teste inteiro (calculado em segundo plano após carregar o modelo).         |
@@ -865,6 +884,8 @@ curl -X POST localhost:8000/predict -H 'content-type: application/json' \
 ### Limitações
 
 - **Sem autenticação:** é um projeto local.
+- **O painel de monitoramento lê arquivos, não o Prometheus:** a API monta `data/monitoring/` somente leitura (o resumo que a DAG `monitoring` grava). Sem esse arquivo, o painel mostra que ainda não há relatório.
+- **O comparativo de modelos é o do treino do campeão:** só entram runs até 3 h de distância do run do campeão, para que um treino posterior (ex.: um challenger rejeitado pelo gate) não apareça com os números dele.
 - **Features "mais recentes" são de 1998:** o dataset é histórico e as views do Feast não têm TTL. Uma conta parada há meses seria prevista com dados velhos, e por isso a resposta traz `features_as_of`.
 - **Mesmas versões em todo lugar:** a imagem da API e o venv do Airflow são instalados pelo `poetry.lock`, porque o modelo do MLflow é um pickle que só carrega com as versões com que foi treinado.
 

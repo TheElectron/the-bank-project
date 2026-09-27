@@ -14,16 +14,41 @@ import pandas as pd
 from the_bank_project.features import FeatureReader
 from the_bank_project.serving.catalog import AccountCatalog
 from the_bank_project.serving.model_store import ModelBundle
-from the_bank_project.serving.schemas import ErrorStats, EvaluationReport, MonthError, ScatterPoint
+from the_bank_project.serving.schemas import BandError, ErrorStats, EvaluationReport, MonthError, ScatterPoint
 from the_bank_project.serving.service import BASELINE, CALENDAR_REFS
 from the_bank_project.training.evaluate import regression_metrics
 
 logger = logging.getLogger(__name__)
 SCATTER_POINTS = 1_200
+# Faixas do valor REAL (Kč). As saídas são muito assimétricas (mediana ~11 mil, máximo ~290 mil): o erro médio
+# geral esconde que o modelo erra mais, em valor absoluto, nas contas de gasto alto.
+BANDS: tuple[tuple[str, float, float | None], ...] = (
+    ("Até 5 mil", 0, 5_000),
+    ("5 a 10 mil", 5_000, 10_000),
+    ("10 a 20 mil", 10_000, 20_000),
+    ("20 a 50 mil", 20_000, 50_000),
+    ("Acima de 50 mil", 50_000, None),
+)
 
 
 def _stats(y: np.ndarray, pred: np.ndarray) -> ErrorStats:
     return ErrorStats(**regression_metrics(y, pred))
+
+
+def error_by_band(y: np.ndarray, pred: np.ndarray, base: np.ndarray) -> list[BandError]:
+    """MAE do modelo e do baseline por faixa do valor real; faixas sem nenhuma conta-mês ficam de fora."""
+    rows = []
+    for label, lower, upper in BANDS:
+        mask = (y >= lower) & (y < upper if upper is not None else True)
+        if mask.any():
+            rows.append(
+                BandError(
+                    label=label, lower=lower, upper=upper, n=int(mask.sum()),
+                    model_mae=float(np.abs(y[mask] - pred[mask]).mean()),
+                    baseline_mae=float(np.abs(y[mask] - base[mask]).mean()),
+                )
+            )  # fmt: skip
+    return rows
 
 
 def build_report(
@@ -67,6 +92,7 @@ def build_report(
         within_20_model=float((np.abs(y - pred) <= 0.2 * y).mean()),
         within_20_baseline=float((np.abs(y - base) <= 0.2 * y).mean()),
         by_month=by_month,
+        by_band=error_by_band(y, pred, base),
         points=[ScatterPoint(actual=float(y[i]), predicted=float(pred[i]), baseline=float(base[i])) for i in pick],
         axis_max=float(np.percentile(y, 99)),
     )

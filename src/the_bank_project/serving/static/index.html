@@ -17,7 +17,8 @@
 <body>
   <a class="skip" href="#lab">Ir para o laboratório</a>
 
-  <header class="top">
+  <header class="bar">
+  <div class="top">
     <div class="brand">
       <svg class="mark" viewBox="0 0 40 40" aria-hidden="true">
         <rect width="40" height="40" rx="11" fill="var(--ink)" />
@@ -30,12 +31,19 @@
         <p>Previsão das saídas do mês seguinte, conta a conta</p>
       </div>
     </div>
+    <nav class="toc" id="toc" aria-label="Seções da página">
+      <a href="#proof" data-for="proof">Visão geral</a>
+      <a href="#model" data-for="model" hidden>Modelo</a>
+      <a href="#lab" data-for="lab">Laboratório</a>
+      <a href="#overall" data-for="overall" hidden>Desempenho</a>
+    </nav>
     <div class="top-right">
       <div class="chip" id="model-chip" hidden><span class="dot"></span><span id="model-chip-text"></span></div>
       <button class="icon-btn" id="theme" type="button" aria-label="Alternar entre tema claro e escuro" title="Alternar tema">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></svg>
       </button>
     </div>
+  </div>
   </header>
 
   <main>
@@ -53,9 +61,18 @@
       </figure>
     </section>
 
+    <section class="model" id="model" aria-labelledby="model-title" hidden>
+      <div class="lab-head">
+        <p class="eyebrow">02 · Modelo</p>
+        <h2 class="section-title" id="model-title">O que é o campeão e o que ele olha</h2>
+        <p class="lede">Como o modelo foi treinado e medido, quais informações mais pesam nas previsões e se os dados de hoje ainda se parecem com os do treino.</p>
+      </div>
+      <div class="model-grid" id="model-body"></div>
+    </section>
+
     <section class="lab" id="lab" aria-labelledby="lab-title">
       <div class="lab-head">
-        <p class="eyebrow">Laboratório</p>
+        <p class="eyebrow">03 · Laboratório</p>
         <h2 class="section-title" id="lab-title">Compare o previsto com o que de fato aconteceu</h2>
         <p class="lede">Escolha o mês de referência e algumas contas. O modelo prevê as saídas do mês seguinte usando só o que era conhecido até ali; em meses passados, você vê o valor real ao lado.</p>
       </div>
@@ -66,7 +83,7 @@
     </section>
 
     <section class="overall" id="overall" aria-labelledby="overall-title" hidden>
-      <p class="eyebrow">Desempenho geral</p>
+      <p class="eyebrow">04 · Desempenho geral</p>
       <h2 class="section-title" id="overall-title">E no conjunto de teste inteiro?</h2>
       <p class="lede" id="overall-lede"></p>
       <div id="overall-body"></div>

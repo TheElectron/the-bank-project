@@ -1,0 +1,40 @@
+# Gerado por `make tune` (Fase 9a). Lido pelo `train`; não editar à mão.
+generated_at: '2026-09-27T01:27:01.128650Z'
+seed: 42
+log_target: true
+cv_folds: 4
+tuned_window: 1993-01-31..1997-10-31 (122618 linhas)
+models:
+  random_forest:
+    params:
+      n_estimators: 191
+      max_depth: 17
+      min_samples_leaf: 7
+      max_features: 0.6113875507308892
+    cv_mae: 5973.775784988988
+    default_cv_mae: 6010.084262717361
+    n_trials: 13
+    source: tuned
+  gradient_boosting:
+    params:
+      max_iter: 232
+      learning_rate: 0.04029695576831731
+      max_depth: 7
+      min_samples_leaf: 46
+      l2_regularization: 0.02013113093617532
+    cv_mae: 6123.83338483234
+    default_cv_mae: 6146.854523694263
+    n_trials: 30
+    source: tuned
+  xgboost:
+    params:
+      n_estimators: 335
+      learning_rate: 0.02001100687363041
+      max_depth: 9
+      subsample: 0.8196421460881023
+      colsample_bytree: 0.6949800632032497
+      min_child_weight: 15
+    cv_mae: 6019.25129464934
+    default_cv_mae: 6080.378269790018
+    n_trials: 30
+    source: tuned

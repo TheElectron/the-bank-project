@@ -16,6 +16,7 @@ from the_bank_project.training.evaluate import NAIVE_BASELINES, regression_metri
 from the_bank_project.training.models import CANDIDATES, Candidate, Params, make_estimator, trial_params
 from the_bank_project.training.split import Split, chronological_split
 from the_bank_project.training.tracking import configure_mlflow, run_name
+from the_bank_project.training.tuned_params import BestParams, load_best_params
 
 logger = logging.getLogger(__name__)
 
@@ -65,11 +66,19 @@ def _run_baselines(ds: Dataset, split: Split, day: date) -> list[ModelResult]:
     return results
 
 
-def _select_params(cand: Candidate, ds: Dataset, split: Split, cfg: GlobalConfig) -> tuple[Params, dict[str, float]]:
-    """Ajusta cada configuração só no treino e escolhe a de menor MAE na validação."""
+def _select_params(
+    cand: Candidate, ds: Dataset, split: Split, cfg: GlobalConfig, tuned: BestParams | None = None
+) -> tuple[Params, dict[str, float]]:
+    """Ajusta cada configuração só no treino e escolhe a de menor MAE na validação.
+
+    Com parâmetros ajustados (`make tune`) para o modelo, só eles são avaliados: o sorteio simples fica
+    como fallback quando ainda não há `best_params.yaml`.
+    """
     tc = cfg.training
     best: tuple[Params, dict[str, float]] | None = None
-    for i, params in enumerate(trial_params(cand, tc.n_tuning_trials, tc.seed)):
+    from_tuning = tuned is not None and cand.name in tuned.models
+    candidates = [{**cand.defaults, **tuned.models[cand.name].params}] if tuned and from_tuning else None
+    for i, params in enumerate(candidates or trial_params(cand, tc.n_tuning_trials, tc.seed)):
         with mlflow.start_run(run_name=f"trial_{cand.name}_{i}", nested=True):
             model = make_estimator(cand, params, tc.seed, tc.log_target).fit(ds.X[split.train], ds.y[split.train])
             val = regression_metrics(ds.y[split.val], model.predict(ds.X[split.val]))
@@ -82,11 +91,12 @@ def _select_params(cand: Candidate, ds: Dataset, split: Split, cfg: GlobalConfig
 
 
 def _run_candidate(
-    cand: Candidate, ds: Dataset, split: Split, cfg: GlobalConfig, naive_mae: float, day: date
-) -> ModelResult:
+    cand: Candidate, ds: Dataset, split: Split, cfg: GlobalConfig, naive_mae: float, day: date,
+    tuned: BestParams | None = None,
+) -> ModelResult:  # fmt: skip
     tc = cfg.training
     with mlflow.start_run(run_name=run_name("treino", cand.name, day)) as run:
-        params, val = _select_params(cand, ds, split, cfg)
+        params, val = _select_params(cand, ds, split, cfg, tuned)
         fit_mask = split.train | split.val  # o modelo final usa treino + validação; o teste fica intocado
         final = make_estimator(cand, params, tc.seed, tc.log_target).fit(ds.X[fit_mask], ds.y[fit_mask])
         pred = final.predict(ds.X[split.test])
@@ -96,6 +106,7 @@ def _run_candidate(
         _log_metrics("test", test)
         mlflow.log_metric("test_skill_vs_naive", skill_score(test["mae"], naive_mae))
         mlflow.set_tags({"model_kind": "candidate", "algorithm": cand.name, "feature_service": tc.feature_service,
+                         "params_source": "tuned" if tuned and cand.name in tuned.models else "random_search",
                          **split.describe()})  # fmt: skip
         sample = ds.X[split.test].head(5)
         # cloudpickle: o formato padrão (skops) exige listar cada tipo do modelo como "confiável" e a lista muda
@@ -122,7 +133,8 @@ def run_training(cfg: GlobalConfig, dataset: Dataset | None = None, day: date | 
     logger.info("Tracking: %s | %s", uri, split.describe())
     baselines = _run_baselines(ds, split, day)
     naive_mae = min(b.test["mae"] for b in baselines)
-    candidates = [_run_candidate(c, ds, split, cfg, naive_mae, day) for c in CANDIDATES]
+    tuned = load_best_params(cfg)
+    candidates = [_run_candidate(c, ds, split, cfg, naive_mae, day, tuned) for c in CANDIDATES]
     winner = min(candidates, key=lambda r: r.val["mae"])
 
     client, name = MlflowClient(), cfg.training.registered_model

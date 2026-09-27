@@ -54,6 +54,9 @@ def calls(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
     monkeypatch.setattr(cli, "gold_to_labels", lambda gold: calls.append("labels"))
     monkeypatch.setattr(cli, "run_training", lambda c: calls.append(f"train:{c.training.n_tuning_trials}"))
     monkeypatch.setattr(cli, "promote", lambda c: calls.append("promote"))
+    from the_bank_project.training import tuning
+
+    monkeypatch.setattr(tuning, "run_tuning", lambda c: calls.append(f"tune:{c.tuning.n_trials}"))
     return calls
 
 
@@ -66,6 +69,11 @@ def test_cli_runs_requested_step(calls: list[str], step: str, expected: list[str
 
 def test_cli_trials_option_overrides_config(calls: list[str]):
     assert cli.main(["train", "--trials", "2"]) == 0 and calls == ["train:2"]
+
+
+def test_cli_tune_step_uses_the_optuna_trials_setting(calls: list[str]):
+    assert cli.main(["tune"]) == 0 and cli.main(["tune", "--trials", "5"]) == 0
+    assert calls == ["tune:30", "tune:5"]
 
 
 def test_cli_returns_1_on_error(calls: list[str], monkeypatch: pytest.MonkeyPatch):

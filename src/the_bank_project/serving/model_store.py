@@ -4,6 +4,7 @@ import logging
 import re
 import threading
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Literal, Protocol
 
 import mlflow
@@ -19,6 +20,9 @@ from the_bank_project.training.registry import CHAMPION
 from the_bank_project.training.tracking import tracking_uri
 
 logger = logging.getLogger(__name__)
+SAME_TRAINING_HOURS = (
+    3  # um treino completo leva de minutos a ~40 min; runs a mais de 3 h do campeão são de outro treino
+)
 
 LABELS = {
     "regressao_linear": "Regressão linear",
@@ -117,7 +121,7 @@ class ModelStore:
         tags = run.data.tags if run else {}
         metrics = {k: float(v) for k, v in (run.data.metrics if run else {}).items() if k.startswith(("val_", "test_"))}
         windows = {k: v for k, v in tags.items() if k.endswith("_window")}
-        comparison = self._comparison(windows.get("test_window"), algorithm)
+        comparison = self._comparison(windows.get("test_window"), algorithm, run.info.start_time if run else None)
         naive = [c.test_mae for c in comparison if c.kind == "baseline"]
         skill = 1 - metrics["test_mae"] / min(naive) if naive and "test_mae" in metrics else None
         importance = _importances(model, names)
@@ -134,16 +138,30 @@ class ModelStore:
             windows=windows,
             comparison=comparison,
             features=features,
+            params=dict(run.data.params) if run else {},
+            params_source=tags.get("params_source"),
+            trained_at=datetime.fromtimestamp(run.info.start_time / 1000, UTC) if run else None,
         )
 
-    def _comparison(self, test_window: str | None, champion: str) -> list[ComparisonRow]:
-        """Baselines e candidatos do mesmo treino (mesma janela de teste), o run mais recente de cada um."""
+    def _comparison(self, test_window: str | None, champion: str, champion_start_ms: int | None) -> list[ComparisonRow]:
+        """Baselines e candidatos do mesmo treino do campeão, o run mais recente de cada um.
+
+        "Mesmo treino" = mesma janela de teste e início dentro de `SAME_TRAINING_HOURS` do run do campeão: sem
+        isso, um treino posterior (ex.: um challenger que perdeu no gate) apareceria com os números do campeão.
+        """
         exp = mlflow.get_experiment_by_name(self._cfg.training.experiment)
         if exp is None or not test_window:
             return []
+        filter_string = f"tags.test_window = '{test_window}'"
+        if champion_start_ms is not None:
+            span = SAME_TRAINING_HOURS * 3_600_000
+            filter_string += (
+                f" and attributes.start_time >= {champion_start_ms - span}"
+                f" and attributes.start_time <= {champion_start_ms + span}"
+            )
         runs = self._client.search_runs(
             [exp.experiment_id],
-            filter_string=f"tags.test_window = '{test_window}'",
+            filter_string=filter_string,
             order_by=["attributes.start_time DESC"],
             max_results=200,
         )

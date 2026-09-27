@@ -1,3 +1,5 @@
+import time
+
 import mlflow
 import numpy as np
 import pandas as pd
@@ -27,7 +29,10 @@ def registry(cfg: GlobalConfig):  # type: ignore[no-untyped-def]
         X = pd.DataFrame(rng.uniform(1, 100, (40, len(columns))), columns=columns)
         model = LinearRegression().fit(X, X.sum(axis=1))
         with mlflow.start_run(run_name="treino_xgboost_2026-09-24"):
-            mlflow.set_tags({"test_window": WINDOW, "model_kind": "candidate", "algorithm": algorithm})
+            mlflow.set_tags(
+                {"test_window": WINDOW, "model_kind": "candidate", "algorithm": algorithm, "params_source": "tuned"}
+            )
+            mlflow.log_params({"n_estimators": 10, "learning_rate": 0.05})
             mlflow.log_metrics({"test_mae": mae, "val_mae": mae + 1})
             info = mlflow.sklearn.log_model(
                 model, name="model", signature=infer_signature(X, model.predict(X)), serialization_format="cloudpickle"
@@ -64,6 +69,8 @@ def test_loads_the_champion_with_signature_metrics_and_comparison(registry):  # 
         ("naive_media_3m", "baseline", False),
     ]
     assert info.windows["test_window"] == WINDOW
+    assert info.params == {"n_estimators": "10", "learning_rate": "0.05"} and info.params_source == "tuned"
+    assert info.trained_at is not None and info.trained_at.tzinfo is not None
     assert len(bundle.model.predict(pd.DataFrame({"outflow_3m_avg": [1.0], "closing_balance": [2.0]}))) == 1  # type: ignore[attr-defined]
 
 
@@ -90,3 +97,21 @@ def test_incompatible_first_champion_leaves_the_api_without_model(registry):  # 
     store, register = registry
     register(["so_no_modelo"])
     assert store.refresh() is False and store.bundle is None
+
+
+def test_comparison_ignores_runs_from_other_trainings(registry):  # type: ignore[no-untyped-def]
+    """Um treino posterior (ex.: challenger que perdeu no gate) não pode aparecer com os números do campeão."""
+    store, register = registry
+    register(["outflow_3m_avg", "closing_balance"], mae=5.0)
+    exp = mlflow.get_experiment_by_name(store._cfg.training.experiment)  # noqa: SLF001
+    client, now_ms = MlflowClient(), int(time.time() * 1000)
+    for name, offset_h, mae in [("xgboost", 24, 99.0), ("xgboost", -24, 77.0)]:  # um treino depois, um antes
+        run = client.create_run(
+            exp.experiment_id, start_time=now_ms + offset_h * 3_600_000,
+            tags={"mlflow.runName": f"treino_{name}_2026-01-01", "test_window": WINDOW, "model_kind": "candidate"},
+        )  # fmt: skip
+        client.log_metric(run.info.run_id, "test_mae", mae)
+        client.set_terminated(run.info.run_id)
+    assert store.refresh() is True
+    rows = {c.name: c.test_mae for c in store.bundle.info.comparison}  # type: ignore[union-attr]
+    assert rows["xgboost"] == 5.0  # o do campeão, não 99 (depois) nem 77 (antes)

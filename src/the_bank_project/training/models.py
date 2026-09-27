@@ -15,6 +15,8 @@ from sklearn.preprocessing import StandardScaler
 from xgboost import XGBRegressor
 
 Params = dict[str, Any]
+# ("int", lo, hi) | ("float", lo, hi) | ("log", lo, hi): float em escala log | ("cat", [valores])
+SpaceSpec = tuple[Any, ...]
 
 
 @dataclass(frozen=True)
@@ -24,7 +26,8 @@ class Candidate:
     name: str
     build: Callable[[Params, int], Any]
     defaults: Params = field(default_factory=dict)
-    space: dict[str, list[Any]] = field(default_factory=dict)
+    space: dict[str, list[Any]] = field(default_factory=dict)  # sorteio simples do `train` (sem best_params.yaml)
+    tune_space: dict[str, SpaceSpec] = field(default_factory=dict)  # espaço contínuo do Optuna (`make tune`)
     supports_log_target: bool = True
 
 
@@ -58,6 +61,12 @@ CANDIDATES = (
             "min_samples_leaf": [3, 5, 10, 20],
             "max_features": [0.3, 0.5, 0.8],
         },
+        tune_space={
+            "n_estimators": ("int", 100, 300),
+            "max_depth": ("int", 6, 20),
+            "min_samples_leaf": ("int", 2, 30),
+            "max_features": ("float", 0.2, 1.0),
+        },
     ),  # fmt: skip
     Candidate(
         "gradient_boosting",
@@ -69,6 +78,13 @@ CANDIDATES = (
             "max_depth": [4, 6, 8],
             "min_samples_leaf": [10, 20, 50],
             "l2_regularization": [0.0, 1.0, 10.0],
+        },
+        tune_space={
+            "max_iter": ("int", 150, 600),
+            "learning_rate": ("log", 0.02, 0.2),
+            "max_depth": ("int", 3, 10),
+            "min_samples_leaf": ("int", 5, 100),
+            "l2_regularization": ("log", 1e-3, 30.0),
         },
     ),  # fmt: skip
     Candidate(
@@ -88,6 +104,14 @@ CANDIDATES = (
             "subsample": [0.7, 0.8, 1.0],
             "colsample_bytree": [0.6, 0.8, 1.0],
             "min_child_weight": [1, 5, 10],
+        },
+        tune_space={
+            "n_estimators": ("int", 200, 700),
+            "learning_rate": ("log", 0.02, 0.2),
+            "max_depth": ("int", 3, 9),
+            "subsample": ("float", 0.6, 1.0),
+            "colsample_bytree": ("float", 0.5, 1.0),
+            "min_child_weight": ("int", 1, 20),
         },
     ),  # fmt: skip
 )

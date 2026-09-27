@@ -1,6 +1,6 @@
 """Contratos de entrada e saída da API (Pydantic)."""
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -132,6 +132,9 @@ class ModelInfo(BaseModel):
     windows: dict[str, str]
     comparison: list[ComparisonRow]
     features: list[dict[str, Any]]
+    params: dict[str, str] = Field(default_factory=dict, description="Hiperparâmetros do run que treinou o modelo.")
+    params_source: str | None = Field(default=None, description="`tuned` (best_params.yaml) ou `random_search`.")
+    trained_at: datetime | None = Field(default=None, description="Início do run de treino (UTC).")
 
 
 class ErrorStats(BaseModel):
@@ -159,6 +162,17 @@ class ScatterPoint(BaseModel):
     baseline: float
 
 
+class BandError(BaseModel):
+    """Erro do modelo e do baseline nas contas-mês cujo valor real cai numa faixa de gasto."""
+
+    label: str
+    lower: float
+    upper: float | None = Field(description="Nulo na última faixa (sem limite superior).")
+    n: int
+    model_mae: float
+    baseline_mae: float
+
+
 class EvaluationReport(BaseModel):
     """Desempenho do campeão no conjunto de teste inteiro, recalculado com o modelo carregado."""
 
@@ -171,6 +185,7 @@ class EvaluationReport(BaseModel):
     within_20_model: float = Field(description="Fração de previsões a até 20% do valor real.")
     within_20_baseline: float = Field(description="Idem, para a média de 3 meses.")
     by_month: list[MonthError]
+    by_band: list[BandError]
     points: list[ScatterPoint]
     axis_max: float = Field(description="Limite dos eixos do dispersão (percentil 99 do valor real).")
 
@@ -180,3 +195,26 @@ class EvaluationResponse(BaseModel):
 
     ready: bool
     report: EvaluationReport | None = None
+
+
+class DriftedFeature(BaseModel):
+    """Feature com drift e o score (Wasserstein normalizada) que a colocou acima do limiar."""
+
+    name: str
+    score: float
+
+
+class MonitoringStatus(BaseModel):
+    """Último relatório de drift e último re-treino disparado por ele (`available=False`: ainda não rodou)."""
+
+    available: bool
+    drift_detected: bool | None = None
+    n_features: int | None = None
+    n_drifted: int | None = None
+    drift_share: float | None = None
+    drift_share_threshold: float | None = None
+    reference_window: str | None = None
+    current_window: str | None = None
+    generated_at: datetime | None = None
+    last_retrain_at: datetime | None = None
+    top_drifted: list[DriftedFeature] = Field(default_factory=list)

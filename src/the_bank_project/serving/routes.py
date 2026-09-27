@@ -8,12 +8,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from the_bank_project.serving.catalog import month_end
 from the_bank_project.serving.model_store import ModelBundle
+from the_bank_project.serving.monitoring_status import read_status
 from the_bank_project.serving.schemas import (
     AccountInfo,
     AccountPage,
     EvaluationResponse,
     History,
     ModelInfo,
+    MonitoringStatus,
     MonthInfo,
     PredictRequest,
     PredictResponse,
@@ -102,6 +104,12 @@ def evaluation(state: State, bundle: Bundle) -> EvaluationResponse:
     """Desempenho do campeão em todo o conjunto de teste (calculado em segundo plano após a carga do modelo)."""
     report = state.evaluation.get(bundle.info.version)
     return EvaluationResponse(ready=report is not None, report=report)
+
+
+@router.get("/api/monitoring", response_model=MonitoringStatus, tags=["interface"])
+def monitoring(state: State) -> MonitoringStatus:
+    """Último relatório de drift e último re-treino disparado por ele. Não depende do campeão."""
+    return read_status(state.cfg)
 
 
 @router.get("/api/months", response_model=list[MonthInfo], tags=["interface"])

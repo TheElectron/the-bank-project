@@ -18,7 +18,7 @@ Interface via Makefile (`make help`):
 
 - Qualidade: `install`, `lint`, `format`, `typecheck`, `test`, `check` (= o que o CI roda), `hooks`, `clean`.
 - Dados: `ingest` (Kaggle → Raw → Bronze), `silver`, `gold`, `features` (Feast apply + materialize).
-- Modelo: `labels`, `train`, `promote` (gate do MLflow).
+- Modelo: `labels`, `train`, `tune` (Optuna + CV temporal → `configs/best_params.yaml`, grupo `tuning`), `promote` (gate do MLflow).
 - Monitoramento: `drift` (Evidently: treino x últimos meses da Gold, saída em `data/monitoring/`), `retrain-check` (decisão de re-treino, sem efeito colateral).
 - Serving: `serve` (API + interface em :8000, local; precisa de `MLFLOW_TRACKING_URI` no `.env`).
 - Infra Docker: `up`/`down` (Airflow :8080, MLflow :5000, API :8000, Prometheus :9090, Pushgateway :9091 e Grafana :3000), `dag-check` (valida as DAGs na imagem do Airflow), `monitoring-check` (promtool sobre `monitoring/`), `cd-check` (override do GHCR + smoke das imagens).
@@ -36,7 +36,7 @@ Interface via Makefile (`make help`):
   Airflow (cujos constraints fixam pandas 2.1/numpy 1.26). O decorator deve aparecer por extenso em cada task.
 - Serving em `the_bank_project.serving` (`state` → `service`/`catalog`/`model_store` → `routes` → `app`): a API
   não lê a Gold; features só via `FeatureReader`. Interface em
-  `serving/static/` sem build (JS puro, textos sempre via `textContent`). Imagens da API e do venv do Airflow
+  `serving/static/` sem build (JS puro, textos sempre via `textContent`; seção Modelo em `js/model_panel.js`). Monitoramento na interface via `GET /api/monitoring` (lê `data/monitoring/`, montado somente leitura; a API continua sem ler a Gold). Imagens da API e do venv do Airflow
   instalam pelo `poetry.lock` (o modelo do MLflow é um pickle).
 - Monitoramento em `monitoring/` (`prometheus.yml`, `alerts.yml`, Grafana provisionado em `grafana/`): todo nome de métrica usado nos alertas/dashboard
   deve existir em `serving/metrics.py` (teste de contrato em `tests/monitoring/`). Sem Alertmanager (infra local).

@@ -43,6 +43,7 @@ const MONTHS_LONG = ["janeiro", "fevereiro", "março", "abril", "maio", "junho",
 const parts = (iso) => { const [y, m] = iso.split("-").map(Number); return { y, m }; };
 export const monthLabel = (iso) => { const { y, m } = parts(iso); return `${MONTHS[m - 1]}/${y}`; };
 export const monthShort = (iso) => { const { y, m } = parts(iso); return `${MONTHS[m - 1]}/${String(y).slice(2)}`; };
+export const dateLong = (iso) => (iso ? new Date(iso).toLocaleDateString("pt-BR", { day: "numeric", month: "long", year: "numeric" }) : "—");
 export const monthLong = (iso) => { const { y, m } = parts(iso); return `${MONTHS_LONG[m - 1]} de ${y}`; };
 
 /** Escala linear simples. */

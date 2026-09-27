@@ -82,6 +82,15 @@ class TrainingConfig(BaseModel):
     tracking_uri: str | None = None  # None: SQLite local em data/mlflow/ (ver `Settings.mlflow_tracking_uri`)
 
 
+class TuningConfig(BaseModel):
+    """Tuning de hiperparâmetros (Optuna + validação cruzada temporal dentro dos meses de treino)."""
+
+    n_trials: int = 30  # tentativas por modelo (o `timeout_minutes` pode encerrar antes)
+    cv_folds: int = 4  # dobras de janela expansiva; a validação e o teste do split não entram
+    timeout_minutes: float = 20  # teto de tempo por modelo
+    best_params_file: str = "best_params.yaml"  # relativo a `configs/` (ou absoluto); lido pelo `train`
+
+
 class ServingConfig(BaseModel):
     """API de inferência (FastAPI)."""
 
@@ -111,6 +120,7 @@ class GlobalConfig(BaseModel):
     kaggle: KaggleConfig
     feast: FeastConfig = FeastConfig()
     training: TrainingConfig = TrainingConfig()
+    tuning: TuningConfig = TuningConfig()
     serving: ServingConfig = ServingConfig()
     monitoring: MonitoringConfig = MonitoringConfig()
 

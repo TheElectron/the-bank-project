@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import mlflow
@@ -14,6 +14,7 @@ from the_bank_project.training.models import CANDIDATES
 from the_bank_project.training.split import chronological_split
 from the_bank_project.training.tracking import configure_mlflow, run_name
 from the_bank_project.training.train import TrainingResult, run_training
+from the_bank_project.training.tuned_params import BestParams, TunedModel
 
 DAY = date(2026, 9, 24)
 METRICS = {"val_mae", "val_rmse", "val_r2", "test_mae", "test_rmse", "test_r2"}
@@ -90,3 +91,33 @@ def test_test_window_never_influences_selection_and_each_training_adds_a_version
         {r.name: r.val["mae"] for r in first.candidates}
     )
     assert second.winner.test["mae"] > first.winner.test["mae"]
+
+
+def make_tuned(**params: object) -> BestParams:
+    model = TunedModel(params=params, cv_mae=1.0, default_cv_mae=2.0, n_trials=3, source="tuned")
+    return BestParams(generated_at=datetime(2026, 9, 26, tzinfo=UTC), seed=42, log_target=True, cv_folds=4,
+                      tuned_window="x", models={"xgboost": model})  # fmt: skip
+
+
+def test_training_uses_tuned_params_instead_of_random_search(
+    cfg: GlobalConfig, dataset: Dataset, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(train_module, "load_best_params", lambda _: make_tuned(n_estimators=37))
+    cfg.training.n_tuning_trials = 5  # sem best_params haveria 6 avaliações do xgboost; com ele, só 1
+    run_training(cfg, dataset, DAY)
+    runs = mlflow.search_runs(experiment_names=[cfg.training.experiment])
+    top = runs[runs["tags.mlflow.runName"] == run_name("treino", "xgboost", DAY)].iloc[0]
+    assert top["params.n_estimators"] == "37" and top["tags.params_source"] == "tuned"
+    nested = runs[runs["tags.mlflow.runName"].str.startswith("trial_xgboost", na=False)]
+    assert len(nested) == 1
+    linear = runs[runs["tags.mlflow.runName"] == run_name("treino", "regressao_linear", DAY)].iloc[0]
+    assert linear["tags.params_source"] == "random_search"  # sem entrada no arquivo: segue o sorteio simples
+
+
+def test_training_without_best_params_keeps_the_random_search(cfg: GlobalConfig, dataset: Dataset):
+    cfg.training.n_tuning_trials = 2
+    run_training(cfg, dataset, DAY)
+    runs = mlflow.search_runs(experiment_names=[cfg.training.experiment])
+    assert len(runs[runs["tags.mlflow.runName"].str.startswith("trial_xgboost", na=False)]) >= 2
+    top = runs[runs["tags.mlflow.runName"] == run_name("treino", "xgboost", DAY)].iloc[0]
+    assert top["tags.params_source"] == "random_search"

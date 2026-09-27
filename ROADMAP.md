@@ -18,6 +18,7 @@ Legenda: ⬜ não iniciada · 🚧 em andamento · ✅ concluída
 | 6    | Inferência via API (FastAPI + Docker)                           | 6                   | ✅     |
 | 7    | Monitoramento e re-treino por drift (7a ✅, 7b ✅, 7c ✅)         | 7                   | ✅     |
 | 8    | CD e fechamento                                                 | CI/CD               | ✅     |
+| 9    | Ajustes e melhorias (9a tuning ✅, 9b interface ✅)              | 5, 6                | ✅     |
 
 ## Princípios
 
@@ -271,3 +272,66 @@ Imagens da API e do venv do Airflow passaram a instalar pelo `poetry.lock` (o mo
 - **Revisão final (feita, 2026-09-25):** README, `CLAUDE.md` e este roadmap refletem o estado real; a Fase 5b saiu do
   escopo. Limites conhecidos: o dataset é estático (o re-treino por drift valida o mecanismo, não um ganho de
   desempenho); sem Alertmanager; sem autenticação na API (projeto local).
+
+## Fase 9 — Ajustes e melhorias
+
+Fase pós-entrega: melhora o que já existe sem mudar a arquitetura. **9a** tuning de hiperparâmetros; **9b** layout e
+informações da interface (a 9b não depende da 9a).
+
+### 9a — Tuning de hiperparâmetros (✅ implementada e executada, 2026-09-26)
+
+- **Situação anterior:** configuração padrão + 8 sorteios aleatórios por modelo, escolhidos pelo MAE de **uma única**
+  janela de validação. Os 3 melhores modelos estavam a 2,5% um do outro no MAE de teste.
+- **Fluxo:** `make tune` (Optuna/TPE + validação cruzada temporal) grava `configs/best_params.yaml`; o `train` usa esse
+  arquivo no lugar do sorteio simples (com fallback para o sorteio se o arquivo não existir). O gate da Fase 5 não muda.
+- **Decisões (2026-09-26):**
+  - Optuna no grupo `tuning` do Poetry (só dev/CI). O treino em produção lê o YAML e não importa o Optuna, então as
+    imagens (Airflow, API) não mudam.
+  - Dobras de janela expansiva por mês (`the_bank_project.training.cv`), **só dentro dos meses de treino**, com o
+    `gap_months` do split. Desvio em relação ao plano inicial (treino+validação): usar a validação no tuning
+    enviesaria a escolha do campeão entre os algoritmos, que é feita justamente por ela. O teste segue intocado.
+  - Cada modelo compara o melhor achado com a configuração **padrão nas mesmas dobras**; se nada a bate, fica a padrão
+    (`source: default`), então o tuning nunca piora o CV.
+  - Orçamento: 30 tentativas, 4 dobras e teto de 20 min por modelo (`tuning` em `global_config.yaml`). Reduzido do
+    plano (40) porque cada tentativa são 4 ajustes; tentativas em sequência, sem paralelismo.
+  - Regressão linear fora do tuning (sem hiperparâmetros relevantes).
+  - MLflow: run `tuning_<modelo>_<data>` com as tentativas aninhadas; o `train` marca `params_source` (`tuned` ou
+    `random_search`) em cada run.
+- **Implementação:** `training/cv.py`, `tuned_params.py` (schema + leitura/escrita, sem Optuna), `tuning.py`, espaços
+  `tune_space` em `models.py`, passo `tune` no CLI e `make tune`; testes em `tests/training/`.
+- **Resultado (execução real, ~35 min):** o CV melhorou 0,6% (RF), 0,4% (Gradient Boosting) e 1,0% (XGBoost), mas no
+  teste o efeito ficou entre −0,5% e +0,2%, dentro do ruído. O challenger v4 (RF ajustado, MAE de teste 6.492) **perdeu
+  no gate** para o campeão v1 (6.478), que foi mantido. O RF parou em 13 tentativas pelo teto de 20 min. Conclusão: o
+  erro é limitado pelas features, não pelos hiperparâmetros; melhorias maiores tendem a vir de features. Detalhes e
+  tabela no README ("Tuning de hiperparâmetros").
+- `configs/best_params.yaml` foi mantido (o CV, que é o critério do tuning, melhorou nos três). Apagá-lo devolve o
+  `train` ao sorteio simples.
+
+### 9b — Layout e informações da interface (✅ implementada, 2026-09-26)
+
+- **Escolhas do usuário (2026-09-26):** informações novas = cartão do modelo, importância das features, erro por faixa
+  de gasto e status de monitoramento; visual = reorganizar mantendo a identidade (livro-razão editorial, Fraunces +
+  Hanken Grotesk, mesmas cores de série). Estrutura de página não respondida: adotada a recomendada (página única com
+  navegação fixa).
+- **Layout:** cabeçalho fixo com âncoras e destaque da seção visível (`IntersectionObserver`); seções numeradas
+  (01 Visão geral, 02 Modelo, 03 Laboratório, 04 Desempenho); seções que dependem de dados ficam ocultas até eles chegarem;
+  responsivo (nav rolável no celular). Continua JS puro, sem build, textos via `textContent`.
+- **Seção Modelo (nova, `static/js/model_panel.js`):** cartão do modelo, importância das features (top 10 + por grupo, com
+  tabela equivalente em `<details>`) e saúde dos dados (drift: 12 de 29 = 41% contra o limite de 50%, features que mais
+  mudaram, janelas, último re-treino). O `renderModelSection` recebe `null` no monitoramento sem quebrar.
+- **Desempenho:** novo cartão "Erro por faixa de gasto"; os gráficos de barras passaram a usar `pairedBars` (mesmo
+  código para mês e faixa). Na base real o modelo bate a média de 3 meses nas 5 faixas, e o maior erro absoluto está
+  acima de 50 mil (34.350 Kč, 1.035 contas-mês).
+- **Backend (aditivo, `POST /predict` intacto):** `ModelInfo` ganhou `params`, `params_source` e `trained_at`;
+  `EvaluationReport.by_band` (`error_by_band`, faixas fixas em `evaluation.py`); `GET /api/monitoring`
+  (`serving/monitoring_status.py`, lê `drift_summary.json` e `last_retrain.json`); o compose monta `data/monitoring`
+  somente leitura na API.
+- **Bug encontrado e corrigido no caminho:** o comparativo de modelos usava "o run mais recente de cada um" na mesma
+  janela de teste, então o challenger v4 (rejeitado pelo gate) apareceu com os números do campeão v1 (6.492 no gráfico
+  contra 6.478 no cartão). Agora só entram runs a até 3 h do run do campeão (`SAME_TRAINING_HOURS`), com teste de regressão.
+- **Verificação:** capturas com Chromium headless em desktop e celular (tema claro). **O tema escuro não foi
+  confirmado visualmente**; o CSS novo só usa variáveis que já têm valor no escuro.
+- **Testes:** `tests/serving/` (endpoint de monitoramento com arquivo ausente, presente e corrompido, faixas de erro,
+  parâmetros do modelo, comparativo). A interface em si (JS) não tem teste automatizado além do carregamento dos assets.
+- **Para ver a interface nova no Docker:** reconstruir a imagem da API e recriar o serviço (o compose ganhou o volume
+  `data/monitoring`); o CD do GHCR também as publica no próximo push.

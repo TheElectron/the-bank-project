@@ -1,5 +1,7 @@
+import json
 import time
 from collections.abc import Callable, Iterator
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -217,6 +219,9 @@ def test_evaluation_is_computed_in_background_and_matches_a_manual_calculation(c
     assert report["n_rows"] == len(pairs) and len(report["by_month"]) == pairs["event_timestamp"].nunique()
     assert 0 <= report["win_rate"] <= 1 and report["model"]["mae"] > 0 and report["axis_max"] > 0
     assert len(report["points"]) == min(1200, len(pairs))
+    bands = report["by_band"]
+    assert bands and sum(b["n"] for b in bands) == report["n_rows"]  # toda conta-mês cai em exatamente uma faixa
+    assert [b["lower"] for b in bands] == sorted(b["lower"] for b in bands)
 
 
 # --- interface web ---
@@ -228,3 +233,46 @@ def test_index_and_static_assets_are_served(client: TestClient):
     for path in ("/static/styles.css", "/static/js/app.js", "/static/js/charts.js", "/static/fonts/fraunces.woff2"):
         assert client.get(path).status_code == 200, path
     assert client.get("/docs").status_code == 200  # OpenAPI
+
+
+# --- monitoramento na interface ---
+
+
+def test_monitoring_status_is_unavailable_before_the_first_drift_run(
+    client: TestClient, state: AppState, tmp_path: Path
+):
+    state.cfg.paths.data_dir = tmp_path
+    body = client.get("/api/monitoring").json()
+    assert body["available"] is False and body["top_drifted"] == [] and body["last_retrain_at"] is None
+
+
+def test_monitoring_status_reads_the_drift_summary_and_the_last_retrain(
+    client: TestClient, state: AppState, tmp_path: Path
+):
+    state.cfg.paths.data_dir = tmp_path
+    out = tmp_path / "monitoring"
+    out.mkdir()
+    features = {f"f{i}": {"score": 0.1 * (i + 1), "drifted": i >= 1} for i in range(8)}  # f1..f7 com drift
+    (out / "drift_summary.json").write_text(
+        json.dumps({
+            "reference_window": "a..b", "current_window": "c..d", "reference_rows": 10, "current_rows": 3,
+            "n_features": 8, "n_drifted": 7, "drift_share": 0.875, "drift_detected": True, "feature_threshold": 0.1,
+            "drift_share_threshold": 0.5, "features": features, "generated_at": "2026-09-26T12:00:00Z",
+        })
+    )  # fmt: skip
+    (out / "last_retrain.json").write_text(json.dumps({"triggered_at": "2026-09-26T12:05:00+00:00"}))
+    body = client.get("/api/monitoring").json()
+    assert body["available"] and body["drift_detected"] is True and (body["n_drifted"], body["n_features"]) == (7, 8)
+    assert body["last_retrain_at"].startswith("2026-09-26T12:05")
+    assert [f["name"] for f in body["top_drifted"]] == ["f7", "f6", "f5", "f4", "f3"]  # maiores scores, no máximo 5
+
+
+def test_monitoring_status_survives_a_corrupt_file_and_works_without_a_champion(
+    state_factory: Callable[..., AppState], tmp_path: Path
+):
+    state = state_factory(with_model=False)
+    state.cfg.paths.data_dir = tmp_path
+    (tmp_path / "monitoring").mkdir()
+    (tmp_path / "monitoring" / "drift_summary.json").write_text("{não é json")
+    with make_client(state) as c:
+        assert c.get("/api/monitoring").json()["available"] is False  # a interface segue sem o painel

@@ -1,10 +1,12 @@
 // Interface do The Bank Project: escolher contas, ver as features e comparar previsto x real.
-import { barsChart, hbarChart, lineChart, monthBars, scatterChart } from "./charts.js";
+import { bandBars, bandLabel, barsChart, hbarChart, lineChart, monthBars, scatterChart } from "./charts.js";
+import { renderModelSection } from "./model_panel.js";
 import { $, FREQ, GENDER, clear, h, money, monthLabel, monthLong, num, one, pct, signed, signedPct, svg } from "./util.js";
 
 const MAX_SELECTED = 10;
 const state = {
   model: null,
+  monitoring: null, // /api/monitoring (nulo se indisponível)
   report: null, // desempenho no teste inteiro (quando pronto)
   months: [],
   monthKey: "latest", // 'latest' ou 'YYYY-MM-DD'
@@ -46,12 +48,28 @@ $("#theme").addEventListener("click", () => {
   try { localStorage.setItem("tbp-theme", root.dataset.theme); } catch { /* armazenamento indisponível */ }
 });
 
+/* ---------- navegação: seções e destaque da seção visível ---------- */
+function showSection(id) {
+  document.getElementById(id).hidden = false;
+  document.querySelector(`#toc a[data-for="${id}"]`)?.removeAttribute("hidden");
+  watchSection(id);
+}
+const spy = "IntersectionObserver" in window ? new IntersectionObserver((entries) => {
+  for (const e of entries) {
+    if (!e.isIntersecting) continue;
+    document.querySelectorAll("#toc a").forEach((a) => a.toggleAttribute("aria-current", a.dataset.for === e.target.id));
+  }
+}, { rootMargin: "-30% 0px -60% 0px" }) : null;
+const watchSection = (id) => spy?.observe(document.getElementById(id));
+watchSection("proof");
+watchSection("lab");
+
 /* ---------- herói: o modelo campeão ---------- */
 function renderModel() {
   const m = state.model;
   $("#model-chip").hidden = false;
   $("#model-chip-text").replaceChildren(h("span", {}, "Campeão "), h("strong", {}, `v${m.version}`), h("span", {}, ` · ${m.algorithm_label}`));
-  $("#hero-eyebrow").textContent = `Modelo campeão · ${m.algorithm_label} · versão ${m.version}`;
+  $("#hero-eyebrow").textContent = `01 · Modelo campeão · ${m.algorithm_label} · versão ${m.version}`;
   const naive = m.comparison.filter((c) => c.kind === "baseline");
   const bestNaive = naive.length ? Math.min(...naive.map((c) => c.test_mae)) : null;
   const skill = m.skill_vs_naive;
@@ -402,8 +420,7 @@ let scatterKey = "predicted";
 function renderOverall(report) {
   state.report = report;
   if (state.response) renderResults();
-  const sec = $("#overall");
-  sec.hidden = false;
+  showSection("overall");
   const win = report.window.match(/(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})/);
   $("#overall-lede").textContent = `Duas ou três contas não provam nada: o ganho do modelo é médio. Aqui estão todas as ${num(report.n_rows)} contas-mês de ${win ? `${monthLabel(win[1])} a ${monthLabel(win[2])}` : "teste"}, meses que o modelo não viu no treino, recalculados agora com o modelo carregado.`;
   const body = $("#overall-body");
@@ -431,10 +448,29 @@ function renderOverall(report) {
         h("div", { class: "legend" }, h("span", {}, h("i", { class: "s-pred" }), "Modelo"), h("span", {}, h("i", { class: "s-base" }), "Média de 3 meses")),
         monthTable(report.by_month),
         h("p", { class: "note" }, "Ainda assim, o R² de ", h("b", {}, report.model.r2.toFixed(2).replace(".", ",")), " indica que uma parte grande da variação mensal das saídas não é explicada: o modelo melhora a regra simples, não a substitui por uma bola de cristal."))));
+  body.append(bandsCard(report.by_band));
   setKey(scatterKey);
   monthBars($("#chart-months"), report.by_month);
+  bandBars($("#chart-bands"), report.by_band);
   const tile = $("#tile-win");
   if (tile) { tile.replaceChildren(pct(report.win_rate)); $("#tile-win-n").textContent = `de ${num(report.n_rows)} no teste inteiro`; }
+}
+function bandsCard(bands) {
+  const wins = bands.filter((b) => b.model_mae < b.baseline_mae).length;
+  const worst = bands.reduce((a, b) => (b.model_mae > a.model_mae ? b : a), bands[0]);
+  return h("div", { class: "card", style: { marginTop: "22px" } },
+    h("h3", {}, "Erro por faixa de gasto"),
+    h("p", { class: "sub" }, "Contas-mês agrupadas pelo valor real de saídas no mês seguinte (em Kč)."),
+    h("div", { class: "chart", id: "chart-bands", style: { marginTop: "14px" } }),
+    h("div", { class: "legend" }, h("span", {}, h("i", { class: "s-pred" }), "Modelo"), h("span", {}, h("i", { class: "s-base" }), "Média de 3 meses")),
+    bandTable(bands),
+    h("p", { class: "note" }, `O modelo erra menos que a média de 3 meses em ${wins} de ${bands.length} faixas. O maior erro em Kč está nas contas com gasto real ${bandLabel(worst)} (${money(worst.model_mae)} em média), onde uma previsão errada custa mais em valores absolutos.`));
+}
+function bandTable(rows) {
+  return h("div", { class: "table-wrap" }, h("table", {},
+    h("caption", {}, "Mesmos valores do gráfico, em Kč."),
+    h("thead", {}, h("tr", {}, ["Faixa (valor real)", "Modelo", "Média de 3 meses", "Contas-mês"].map((t) => h("th", { scope: "col" }, t)))),
+    h("tbody", {}, rows.map((r) => h("tr", { style: { cursor: "default" } }, h("td", {}, bandLabel(r)), h("td", {}, num(r.model_mae)), h("td", {}, num(r.baseline_mae)), h("td", {}, num(r.n)))))));
 }
 function monthTable(rows) {
   return h("div", { class: "table-wrap" }, h("table", {},
@@ -454,7 +490,7 @@ async function pollEvaluation(tries = 0) {
 async function init() {
   renderResults();
   try {
-    [state.model, state.months] = await Promise.all([get("/api/model"), get("/api/months")]);
+    [state.model, state.months, state.monitoring] = await Promise.all([get("/api/model"), get("/api/months"), get("/api/monitoring").catch(() => null)]);
   } catch (e) {
     $("#hero-eyebrow").textContent = "Modelo indisponível";
     $("#hero-title").textContent = e.status === 503 ? "Nenhum modelo campeão registrado ainda" : "Não foi possível carregar a API";
@@ -462,6 +498,8 @@ async function init() {
     return;
   }
   renderModel();
+  renderModelSection(state.model, state.monitoring);
+  showSection("model");
   // ponto de partida: o mês de teste mais recente, onde há valor real e o modelo nunca viu os dados
   const testMonth = state.months.find((m) => m.split === "teste");
   state.monthKey = testMonth?.reference_month ?? "latest";
