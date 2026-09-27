@@ -17,7 +17,7 @@ Legenda: ⬜ não iniciada · 🚧 em andamento · ✅ concluída
 | 5    | Treino, validação e ciclo de vida dos modelos (MLflow)          | 5                   | ✅     |
 | 6    | Inferência via API (FastAPI + Docker)                           | 6                   | ✅     |
 | 7    | Monitoramento e re-treino por drift (7a ✅, 7b ✅, 7c ✅)         | 7                   | ✅     |
-| 8    | CD e fechamento                                                 | CI/CD               | 🚧     |
+| 8    | CD e fechamento                                                 | CI/CD               | ✅     |
 
 ## Princípios
 
@@ -249,8 +249,9 @@ Imagens da API e do venv do Airflow passaram a instalar pelo `poetry.lock` (o mo
 
 ## Fase 8 — CD e fechamento
 
-- **Implementada localmente (2026-09-25); o `cd.yml` só roda de verdade no GitHub, então a fase fica 🚧 até o primeiro
-  run verde.** Sem cloud, "deploy" = publicar as imagens no GHCR e subir o compose local.
+- **Implementada (2026-09-25) e validada no GitHub (2026-09-26):** o 1º run do `cd.yml` (commit `23b8132`, após o CI
+  verde) construiu, testou e publicou as 3 imagens (`airflow` ~6 min, `serving` e `mlflow` ~2 min); as tags `latest` e
+  `sha-23b8132` existem no GHCR. Sem cloud, "deploy" = publicar as imagens no GHCR e subir o compose local.
 - `.github/workflows/cd.yml`: dispara por `workflow_run` do CI em `master` (só se `conclusion == 'success'`) e por
   `workflow_dispatch`. Matrix `airflow | mlflow | serving`: build (cache do GHA) → smoke test → push para
   `ghcr.io/<dono>/the-bank-project-<imagem>` com as tags `sha-<curto>` e `latest`. O push só acontece depois do smoke.
@@ -264,8 +265,9 @@ Imagens da API e do venv do Airflow passaram a instalar pelo `poetry.lock` (o mo
 - `tests/cd/`: contrato entre a matrix, os `Dockerfile`, o compose, o override e o smoke script (12 testes).
 - Decisões: `workflow_run` (não `push`, que publicaria com CI vermelho); GHCR com `GITHUB_TOKEN`, sem segredos
   novos; pacotes nascem privados (torná-los públicos é decisão do dono); sem Trivy.
-- **Falta:** o primeiro run do `cd.yml` no GitHub (confirmar o push no GHCR e o `pull` pelo override); depois, marcar
-  a fase como ✅.
+- **Override validado (2026-09-26):** `docker compose -f docker-compose.yml -f docker-compose.ghcr.yml pull` + `up -d`
+  com as imagens baixadas do GHCR: API saudável (campeão v1, 4.500 contas) e uma previsão real em `/predict`, MLflow
+  `OK`, Airflow saudável com as 3 DAGs sem erros de import. O pull precisou de uma nova tentativa (reset de conexão).
 - **Revisão final (feita, 2026-09-25):** README, `CLAUDE.md` e este roadmap refletem o estado real; a Fase 5b saiu do
   escopo. Limites conhecidos: o dataset é estático (o re-treino por drift valida o mecanismo, não um ganho de
   desempenho); sem Alertmanager; sem autenticação na API (projeto local).
