@@ -1,11 +1,12 @@
-"""`gold_account_monthly_movements`: série mensal por conta a partir de `trans`."""
+""" 
+    Este módulo constrói a tabela `gold_account_monthly_movements`, 
+    consolidando uma visão mensal por das movimentações de uma conta a partir das transações realizadas.
+"""
 
 import numpy as np
 import pandas as pd
 
 KEYS = ["account_id", "reference_month"]
-
-# Coluna da Gold -> (coluna da Silver, valores). Soma do valor / contagem das linhas que casam.
 AMOUNT_RULES = {
     "cash_withdrawal": ("operation", "SAQUE_DINHEIRO"),
     "card_withdrawal": ("operation", "SAQUE_CARTAO"),
@@ -17,7 +18,6 @@ AMOUNT_RULES = {
     "interest": ("k_symbol", "JUROS"),
     "penalty_interest": ("k_symbol", "JUROS_PENALIDADE"),
 }
-# `leasing_payment_amount` do desenho original ficou de fora: `LEASING` só existe em `order`, nunca em `trans`.
 COUNT_RULES = ("loan_payment", "transfer_out", "transfer_in", "cash_withdrawal", "card_withdrawal")
 ZERO_FILL = [
     "transaction_count", "active_days", "credit_transaction_count", "debit_transaction_count",
@@ -32,13 +32,8 @@ def _month_end(dates: pd.Series) -> pd.Series:
 
 
 def _day_balances(trans: pd.DataFrame) -> pd.DataFrame:
-    """Saldo de abertura e de fechamento de cada dia com movimento, por conta.
-
-    Dentro do mesmo dia o `trans_id` não segue a ordem real, então a última
-    transação do dia é a única cuja `balance` não é o saldo anterior
-    (`balance - valor com sinal`) de outra do mesmo dia — e a primeira é a
-    inversa. Se a heurística não fechar (valores repetidos), usa a de maior
-    `trans_id`.
+    """
+        Método responsável por calcular o saldo de abertura e de fechamento de cada dia com movimento, por conta.
     """
     sign = np.where(trans["type"] == "CREDITO", 1.0, -1.0)
     t = pd.DataFrame({
@@ -58,7 +53,10 @@ def _day_balances(trans: pd.DataFrame) -> pd.DataFrame:
 
 
 def _aggregate(trans: pd.DataFrame) -> pd.DataFrame:
-    """Uma linha por (conta, mês) com movimento."""
+    """
+        Método responsável por agrupar os dados por `account_id` e `reference_month`, 
+        calculando contagens, somas, médias, mínimas e máximas.
+    """
     t = trans.assign(reference_month=_month_end(trans["date"]))
     credit = t["type"] == "CREDITO"
     amount = t["amount"].astype("float64")
@@ -76,8 +74,8 @@ def _aggregate(trans: pd.DataFrame) -> pd.DataFrame:
         if name in COUNT_RULES:
             cols[f"{name}_count"] = match
     work = pd.DataFrame({**cols, "account_id": t["account_id"], "reference_month": t["reference_month"],
-                         "date": t["date"], "amount": amount, "balance": t["balance"].astype("float64"),
-                         "trans_id": t["trans_id"]})  # fmt: skip
+                        "date": t["date"], "amount": amount, "balance": t["balance"].astype("float64"),
+                        "trans_id": t["trans_id"]})  # fmt: skip
     g = work.groupby(KEYS)
     agg = g.agg(
         transaction_count=("trans_id", "size"), active_days=("date", "nunique"),
@@ -97,10 +95,9 @@ def _aggregate(trans: pd.DataFrame) -> pd.DataFrame:
 
 
 def _fill_gaps(agg: pd.DataFrame) -> pd.DataFrame:
-    """Um registro por mês entre o primeiro e o último mês com movimento de cada conta.
-
-    Meses sem transação entram com fluxos/contagens 0 e saldo carregado do mês
-    anterior, senão janelas e `LAG` olhariam para meses distantes.
+    """
+        Método responsável por gerar um registro por mês entre o primeiro e o último mês com movimento de cada conta, 
+        incluindo os meses sem transação .
     """
     ym = agg["reference_month"].dt.year * 12 + agg["reference_month"].dt.month - 1
     span = ym.groupby(agg["account_id"]).agg(["min", "max"])
@@ -121,7 +118,9 @@ def _fill_gaps(agg: pd.DataFrame) -> pd.DataFrame:
 
 
 def _window_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Lags, médias/somas móveis e variações. Só olham para trás e incluem o mês de referência."""
+    """
+        Método responsável por calcular as médias, somas móveis e variações. 
+    """
     g = df.groupby("account_id")
 
     def rolling(col: str, window: int, how: str) -> pd.Series:
@@ -137,18 +136,16 @@ def _window_features(df: pd.DataFrame) -> pd.DataFrame:
     df["avg_balance_3m"] = rolling("avg_balance", 3, "mean")
     df["transaction_count_3m_avg"] = rolling("transaction_count", 3, "mean")
     for flow in ("outflow", "inflow"):
-        prev = df[f"previous_month_{flow}"].replace(0, np.nan)  # base 0: variação indefinida, não infinita
+        prev = df[f"previous_month_{flow}"].replace(0, np.nan)
         df[f"{flow}_mom_change"] = (df[f"{flow}_amount"] - prev) / prev
     df["balance_mom_change"] = df["closing_balance"] - g["closing_balance"].shift()
     return df
 
 
 def build_gold_account_monthly(trans: pd.DataFrame, account: pd.DataFrame) -> pd.DataFrame:
-    """Silver → `gold_account_monthly_movements` (grão `account_id` x `reference_month`).
-
-    `reference_month` é o **último dia** do mês: é quando as features do mês
-    ficam completas, então serve de `event_timestamp` no Feast sem vazar
-    informação do mês para consultas feitas antes dele terminar.
+    """
+        Método responsável por construir a tabela `gold_account_monthly_movements`, 
+        consolidando uma visão mensal das movimentações de uma conta a partir das transações realizadas.
     """
     df = _window_features(_fill_gaps(_aggregate(trans)))
     opened = df["account_id"].map(account.set_index("account_id")["date"])

@@ -1,9 +1,12 @@
-"""Bronze → Silver: funções puras por tabela + `bronze_to_silver` (I/O)."""
+"""
+    Bronze (`.parquet`) → Silver (`.parquet` limpos e tipados) 
+    Este módulo contém as transformações que convertem os dados da camada Bronze para a camada Silver.
+    Dentre as transformações, destacam-se a tradução de valores categóricos e a conversão de tipos.
+"""
 
 import logging
-from pathlib import Path
-
 import pandas as pd
+from pathlib import Path
 
 from the_bank_project.io import write_parquet_atomic
 from the_bank_project.silver.checks import check_silver
@@ -49,13 +52,19 @@ DISTRICT_FLOAT = ("urban_population_ratio", "unemployment_rate_1995", "unemploym
 
 
 def _blank_to_na(s: pd.Series) -> pd.Series:
-    """Troca os placeholders de nulo do Berka (`""`, `" "`, `"?"`) por NA."""
+    """
+        Troca os placeholders de nulo do Berka (`""`, `" "`, `"?"`) por NA.
+    """
     s = s.astype("string").str.strip()
     return s.mask(s.isin(["", "?"]))
 
 
 def _translate(s: pd.Series, mapping: dict[str, str]) -> pd.Series:
-    """Traduz uma categórica; um código fora do mapa é erro (o schema mudou), não vira nulo."""
+    """
+        Traduz uma variável categórica.
+        Raises:
+            ValueError: se os valores estiverem fora do mapa de tradução.
+    """
     s = _blank_to_na(s)
     out = s.map(mapping).astype("string")
     unknown = sorted(set(s[out.isna() & s.notna()]))
@@ -65,7 +74,10 @@ def _translate(s: pd.Series, mapping: dict[str, str]) -> pd.Series:
 
 
 def _to_date(s: pd.Series) -> pd.Series:
-    """`AAMMDD` (com ou sem hora) → datetime. O dataset cobre só o século XX."""
+    """
+        `AAMMDD` (com ou sem hora) → datetime. 
+        Nota: Todos dados são do período 1990 a 1999, por iss o prefixo `19`.
+    """
     return pd.to_datetime("19" + s.astype("string").str[:6], format="%Y%m%d")
 
 
@@ -74,7 +86,10 @@ def _num(s: pd.Series, dtype: str) -> pd.Series:
 
 
 def build_district(district: pd.DataFrame) -> pd.DataFrame:
-    """Renomeia A1..A16 e tipa; `?` (2 campos do distrito 69) vira nulo."""
+    """
+        Renomeia as colunas da tabela de distritos e tipa os campos numéricos.
+        Nota: `?` é considerado nulo; 
+    """
     df = district.rename(columns=DISTRICT_COLUMNS)
     for col in DISTRICT_INT:
         df[col] = _num(df[col], "Int64")
@@ -84,10 +99,14 @@ def build_district(district: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_client(client: pd.DataFrame, disp: pd.DataFrame, card: pd.DataFrame) -> pd.DataFrame:
-    """Consolida client + disp + card. Os merges são 1:1 e `validate=` falha se deixarem de ser."""
+    """
+        Consolida client + disp + card. 
+        Raises:
+            ValueError: se houver falha no merge (1:1) entre clientes e `disp`.
+    """
     df = client.merge(disp.rename(columns={"type": "relationship_type"}), on="client_id", how="inner", validate="1:1")
     if len(df) != len(client):
-        raise ValueError("Há clientes sem `disp` (ou `disp` de cliente inexistente).")
+        raise ValueError("Falha no merge (1:1) entre clientes e `disp`.")
     card = card.rename(columns={"type": "card_type", "issued": "card_issued"})
     df = df.merge(card, on="disp_id", how="left", validate="1:1")
     month = df["birth_number"].str[2:4].astype(int)
@@ -105,7 +124,9 @@ def build_client(client: pd.DataFrame, disp: pd.DataFrame, card: pd.DataFrame) -
 
 
 def build_account(account: pd.DataFrame, loan: pd.DataFrame) -> pd.DataFrame:
-    """Consolida account + loan (no máximo 1 empréstimo por conta)."""
+    """
+        Consolida account + loan, considerando máximo de 1 empréstimo por conta.
+    """
     loan = loan.rename(columns={c: f"loan_{c}" for c in ("date", "amount", "duration", "payments", "status")})
     df = account.merge(loan, on="account_id", how="left", validate="1:1")
     df["frequency"] = _translate(df["frequency"], FREQUENCY)
@@ -114,12 +135,13 @@ def build_account(account: pd.DataFrame, loan: pd.DataFrame) -> pd.DataFrame:
     df["loan_amount"] = _num(df["loan_amount"], "Float64")
     df["loan_duration"] = _num(df["loan_duration"], "Int64")
     df["loan_payments"] = _num(df["loan_payments"], "Float64")
-    return df[["account_id", "district_id", "frequency", "date", "loan_id", "loan_date", "loan_amount",
-               "loan_duration", "loan_payments", "loan_status"]]  # fmt: skip
+    return df[["account_id", "district_id", "frequency", "date", "loan_id", "loan_date", "loan_amount", "loan_duration", "loan_payments", "loan_status"]]  # fmt: skip
 
 
 def build_order(order: pd.DataFrame) -> pd.DataFrame:
-    """Tipa `amount` e traduz `k_symbol` (branco vira nulo)."""
+    """
+        Ajuste de tipo da coluna`amount` e traduz `k_symbol` na tabela `order`.
+    """
     df = order.copy()
     df["amount"] = _num(df["amount"], "Float64")
     df["k_symbol"] = _translate(df["k_symbol"], K_SYMBOL)
@@ -127,7 +149,9 @@ def build_order(order: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_trans(trans: pd.DataFrame) -> pd.DataFrame:
-    """Tipa e traduz `trans`; branco em `operation`/`k_symbol`/`bank`/`account` vira nulo."""
+    """
+        Ajuste de tipo e tradução das colunas da tabela `trans`.
+    """
     df = trans.copy()
     df["date"] = _to_date(df["date"])
     df["amount"] = _num(df["amount"], "Float64")
@@ -141,7 +165,9 @@ def build_trans(trans: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_silver(bronze: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
-    """Função pura: tabelas da Bronze (tudo texto) → 5 tabelas da Silver, já validadas por `check_silver`."""
+    """
+        Método responsável por construir e validar a camada Silver a partir da Bronze.
+    """
     silver = {
         "district": build_district(bronze["district"]),
         "client": build_client(bronze["client"], bronze["disp"], bronze["card"]),
@@ -154,12 +180,10 @@ def build_silver(bronze: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
 
 
 def bronze_to_silver(bronze_dir: Path, silver_dir: Path) -> list[Path]:
-    """Lê a Bronze, constrói e valida a Silver e grava um parquet por tabela (idempotente).
-
-    Nada é gravado se a validação falhar.
-
-    Raises:
-        FileNotFoundError: se faltar algum parquet da Bronze.
+    """
+        Método responsável por ler as tabelas da Bronze, construir e gravar os dados da Silver.
+        Raises:
+            FileNotFoundError: se faltar algum arquivo `.parquet` da Bronze.
     """
     missing = [t for t in BRONZE_TABLES if not (bronze_dir / f"{t}.parquet").exists()]
     if missing:

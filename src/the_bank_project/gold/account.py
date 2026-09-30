@@ -1,4 +1,7 @@
-"""`gold_account`: um registro por conta, com os atributos do titular, do distrito e do empréstimo."""
+"""
+    Este módulo contém transformações e métodos para construir a tabela `gold_account`, 
+    consolidando os dados de conta, empréstimo, cliente e distrito.
+"""
 
 import pandas as pd
 
@@ -17,15 +20,11 @@ DISTRICT_COLUMNS = {
 
 
 def build_gold_account(account: pd.DataFrame, client: pd.DataFrame, district: pd.DataFrame) -> pd.DataFrame:
-    """Silver → `gold_account` (grão `account_id`).
-
-    O distrito das features é o da conta; o de residência do titular segue em
-    `owner_district_id`. Cartão só existe para titular (garantido pela Silver),
-    então `card_*` já descreve o cartão da conta.
+    """
+        Método responsável por construir a tabela `gold_account`.
     """
     owner = client.loc[client["relationship_type"] == "TITULAR"]
-    owner = owner.rename(columns={"client_id": "owner_client_id", "gender": "owner_gender",
-                                  "birth_date": "owner_birth_date", "district_id": "owner_district_id"})  # fmt: skip
+    owner = owner.rename(columns={"client_id": "owner_client_id", "gender": "owner_gender", "birth_date": "owner_birth_date", "district_id": "owner_district_id"})  # fmt: skip
     dependents = client.loc[client["relationship_type"] == "DEPENDENTE"].groupby("account_id").size()
     dist = district.rename(columns=DISTRICT_COLUMNS)[["district_id", *DISTRICT_COLUMNS.values()]]
 

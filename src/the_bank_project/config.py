@@ -1,8 +1,8 @@
-"""Configuração do projeto: YAML validado via Pydantic + variáveis de ambiente (`.env`)."""
+"""Configuração do projeto geral do projeto."""
 
-from pathlib import Path
 
 import yaml
+from pathlib import Path
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 

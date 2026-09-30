@@ -1,8 +1,14 @@
-"""CLI da Gold: `python -m the_bank_project.gold`."""
+"""
+    Silver → Gold (`gold_account` e `gold_account_monthly_movements`) [CLI]
+    Este módulo contém a CLI para executar a transformação de dados da camada Silver para a Gold.
+    `python -m the_bank_project.gold`
+"""
 
-import argparse
-import logging
+
+
 import sys
+import logging
+import argparse
 from collections.abc import Sequence
 
 from the_bank_project.config import load_config
@@ -13,8 +19,10 @@ logger = logging.getLogger(__name__)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Executa Silver → Gold. Retorna o código de saída do processo."""
-    argparse.ArgumentParser(prog="the_bank_project.gold", description="Silver → Gold.").parse_args(argv)
+    """
+        Executa Silver → Gold.
+    """
+    argparse.ArgumentParser(prog="the_bank_project.gold", description="[Ingestão] Silver → Gold").parse_args(argv)
     configure_logging()
     cfg = load_config()
     try:

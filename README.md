@@ -7,32 +7,28 @@ O projeto consiste em 3 etapas.
 
 ## Pipeline
 
-A imagem a seguir apresenta as principais etapas do pipeline elaborado para o projeto.\
-O fluxo é orquestrado via Airflow, iniciando com o download dos arquivos brutos, a criação das camadas Bronze, Silver e Gold, até a configuração da _feature store_, o treinamento, validação e promoção dos modelos.
-
+A imagem a seguir apresenta as principais etapas do pipeline elaborado.\
 ![Representação esquemática do pipeline desenvolvido](architecture_diagram.png)
-
-O diagrama mostra a arquitetura-alvo: do monitoramento (Fase 7 do `ROADMAP.md`), Prometheus, Grafana e o drift (Evidently, via DAG `monitoring` e Pushgateway) já estão no ar; o re-treino por drift (7c) também, validado ponta a ponta no Airflow. O CI/CD (Fase 8) está descrito em "Entrega (CI/CD)", no fim deste arquivo.
 
 Cada etapa do pipeline é idempotente (reexecutar sobrescreve o resultado, sem duplicar nada) e pode ser executada individualmente, via Makefile:
 
 | Comando          | Etapa                                                                                           |
 | ---------------- | ----------------------------------------------------------------------------------------------- |
-| `make ingest`    | Kaggle → Raw (`.csv`) → Bronze (`.parquet`)                                                     |
-| `make silver`    | Bronze → Silver (tipagem, nulos, traduções e reestruturação)                                    |
-| `make gold`      | Silver → Gold (`gold_account` e `gold_account_monthly_movements`)                               |
-| `make features`  | Feast: registra as views e carrega o online store                                               |
-| `make labels`    | Labels do modelo de regressão (`next_month_outflow`) a partir da Gold                           |
-| `make train`     | Treina os candidatos e registra o vencedor como `challenger` no MLflow                          |
-| `make tune`      | Tuning de hiperparâmetros (Optuna + CV temporal), grava `configs/best_params.yaml`             |
-| `make promote`   | O `challenger` se torna `champion` caso supere os resultados do modelo atual                    |
-| `make drift`     | Relatório de drift (Evidently): treino x últimos meses da Gold, em `data/monitoring/`            |
-| `make retrain-check` | Mostra a decisão de re-treino por drift com o último resumo (não dispara nem grava o cooldown) |
-| `make serve`     | API de inferência e interface web, localmente (http://localhost:8000)                           |
-| `make up`/`down` | Sobe e derruba o Airflow (:8080), o MLflow (:5000), a API (:8000), o Prometheus (:9090) e o Grafana (:3000), via Docker |
-| `make monitoring-check` | Valida `prometheus.yml` e `alerts.yml` com o `promtool` (Docker)                    |
-| `make cd-check`  | Valida o override do GHCR e faz o smoke test das imagens locais                                 |
-| `make check`     | Lint, type check e testes                                                                       |
+| `make ingest`    | [INGESTÃO] Kaggle → Raw (`.csv`) → Bronze (`.parquet`) |
+| `make silver`    | [INGESTÃO] Bronze (`.parquet`) → Silver (`.parquet` limpo e tipado) |
+| `make gold`      | [INGESTÃO] Silver → Gold (`gold_account` e `gold_account_monthly_movements`) |
+| `make features`  | [ML] Criação e configuração da feature store |
+| `make labels`    | [ML] Labels para o modelo de regressão (`next_month_outflow`) a partir da Gold |
+| `make train`     | [ML] Treinamento dos modelos e registro no MLflow |
+| `make tune`      | [ML] Tuning de hiperparâmetros com Optuna e cross-validation temporal |
+| `make promote`   | [ML] Promove o `challenger` caso supere os resultados do atual `champion` |
+| `make serve`     | [API] Interface web para inferência em tempo real |
+| `make drift`     | [MONITORAMENTO] Relatório de drift, via Evidently |
+| `make retrain-check` | [MONITORAMENTO] Verifica a necessidade de re-treino por drift |
+| `make up`/`down` | [CI/CD] Sobe e/ou derruba os containers: Airflow (:8080), o MLflow (:5000), a API (:8000), o Prometheus (:9090) e o Grafana (:3000) |
+| `make monitoring-check` | [CI/CD] Valida `prometheus.yml` e `alerts.yml` com o `promtool` |
+| `make cd-check`  | [CI/CD] Valida o GitHub Container Registry e realiza o smoke test das imagens locais |
+| `make check`     | [CI/CD] Lint, type check e testes |
 
 Nota: para baixar os arquivos brutos, as credenciais do Kaggle precisam estar no arquivo `.env`, conforme o modelo em `.env.example`.
 
@@ -646,33 +642,20 @@ erDiagram
 
 ## Feature Store
 
-A Gold alimenta a feature store, o **único ponto de acesso às features**. \
+A feature store atua como **único ponto de acesso às features**. \
+As tabelas Gold fornecem os dados, enquanto os **targets** são definidos de acordo com cada problema de negócio. \
+Essa separação permite reutilizar a mesma Gold no treinamento de diferentes modelos, além de padronizar as informações utilizadas e evitar o vazamento de dados. \
 As etapas de treino e serving passam por `the_bank_project.features`, e nenhum outro módulo lê a Gold diretamente.
 
-- **Entidade:** `account` (chave `account_id`).
-- **Offline store:** os parquets de `data/gold/` (usado no treino, com join *point-in-time*).
-- **Online store:** SQLite local em `feature_repo/data/` (usado no serving), carregado com o valor mais recente de cada conta.
-- **Views:** `account_static` (de `gold_account`, timestamp `account_open_date`) e `account_monthly` (de `gold_account_monthly_movements`, timestamp `reference_month`). \
-O schema é explícito em `feature_repo/features.py` e um teste de contrato falha se ele divergir das colunas da Gold.
-- **FeatureService `outflow_regression`:** as features da visão mensal e do histórico usadas pelo modelo de regressão. \
-O target não é uma feature.
+- **Entidade:** `account`(`account_id`);
+- **Offline store:** Dados de treinamento;
+- **Online store:** Dados recentes para inferência, via API;
+- **Views:** `account_static` (`gold_account`) e `account_monthly` (`gold_account_monthly_movements`);
+- **FeatureService `outflow_regression`:** Visão mensal e histórica utilizadas pelo modelo. \
 
-Pontos de atenção:
-- **Point-in-time:** como `reference_month` é o fim do mês, uma consulta em `1995-03-30` enxerga fevereiro, não março.
-- **Sem TTL:** o offline store de arquivos do Feast descarta a linha inteira quando a feature expira, e quebra se todas expirarem. \
-Por isso as views não têm TTL, e o dataset de treino deve partir de pares (conta, mês) reais da Gold, não de datas arbitrárias depois do último mês da conta. \
-Linhas anteriores à abertura da conta não voltam do offline store.
-- **Materialização completa:** `materialize_all` reprocessa o histórico inteiro (idempotente). \
-A janela incremental do Feast é limitada pelo TTL a partir de "agora", e o dataset é de 1993–1998.
-- **Versão do pandas:** o Feast exige `pandas<3`, então o projeto todo está em pandas 2.3 (dev, CI, a imagem do Airflow e a da API).
 
 ## Modelos Supervisionados
-
-A partir da camada Gold são construídos os datasets específicos para treinamento dos modelos. \
-As tabelas Gold fornecem as variáveis observadas e derivadas, enquanto os **targets** são definidos de acordo com cada problema de negócio. \
-Essa separação permite reutilizar a mesma Gold em diferentes modelos e evita que variáveis que representam o futuro sejam disponibilizadas como features.
-
-### Modelo de regressão | Gastos do próximo mês
+### Modelo de regressão | Prevendo o gastos de uma conta no próximo mês
 
 O objetivo deste modelo é prever o valor total de saídas de uma conta no mês seguinte.
 Matematicamente:
@@ -692,9 +675,10 @@ y(T+1) = outflow da conta no mês T+1
 
 ```text
 next_month_outflow = outflow_amount(T+1)
-```
 
-A variável `next_month_outflow` não faz parte da Gold nem do Feature Store. Ela é a tabela de labels (`make labels`), que desloca `outflow_amount` para o mês seguinte dentro de cada conta; as features vêm do Feast com join point-in-time em `event_timestamp` (o mês T).
+Nota: A variável target `next_month_outflow` não faz parte da Gold nem da Feature Store.
+Ela é extraída a partir da tabela de labels, que desloca `outflow_amount` para o mês seguinte dentro de cada conta;
+```
 
 **Granularidade:**
 
@@ -702,12 +686,13 @@ A variável `next_month_outflow` não faz parte da Gold nem do Feature Store. El
 1 observação = 1 conta por mês
 ```
 
-A Gold tem 185.326 registros mensais (1.056.320 transações agregadas por conta). O último mês de cada conta não tem mês seguinte e não gera observação de treino, o que deixa **180.826 observações** (meses 1993-01 a 1998-11), gravadas em `data/gold/labels_outflow.parquet` (`account_id`, `event_timestamp`, `next_month_outflow`).
+A Gold tem 185.326 registros mensais (1.056.320 transações agregadas por conta). \
+O último mês de cada conta não tem mês seguinte e não gera observação de treino, o que deixa **180.826 observações** (meses 1993-01 a 1998-11), gravadas em `data/gold/labels_outflow.parquet`.
 
 **Modelos:**
 
 ```text
-Regressão Linear (baseline)
+Regressão Linear
         ↓
 Random Forest Regressor
         ↓
@@ -716,23 +701,17 @@ Gradient Boosting
 XGBoost
 ```
 
-A regressão linear é o baseline de modelo; os demais verificam se relações não lineares e interações melhoram as previsões. \
-O "Gradient Boosting" é o `HistGradientBoostingRegressor` do scikit-learn (o `GradientBoostingRegressor` clássico levaria dezenas de minutos neste volume). \
-Junto entram **dois baselines sem treino**, repetir o `outflow_amount` do mês atual e a média dos últimos 3 meses: um modelo só conta se bater o melhor deles (`test_skill_vs_naive` = `1 − MAE/MAE do melhor ingênuo`).
-
-**Alvo em `log1p`:** as saídas são muito assimétricas (mediana ~11 mil, máximo ~290 mil). \
-Random Forest, Gradient Boosting e XGBoost treinam em `log1p(y)` e revertem antes de medir, o que reduziu o MAE de validação em ~2% (e piorou RMSE/R² em ~5%, já que o MAE é a métrica principal). \
-A regressão linear **não** usa o log: ela extrapola em `log1p` e o `expm1` explode (MAE de validação 32 mil contra 8 mil sem o log).
-
 **Métricas observadas:**
 
 ```text
-MAE
-RMSE
-R²
+MAE     (Erro médio absoluto, )
+RMSE    (Raiz do erro quadrático médio)
+R²      (R Quadrado)
 ```
 
-O MAE indica diretamente o erro médio de previsão, o RMSE dá maior peso a erros elevados e o R² mede a capacidade explicativa do modelo.
+O MAE indica diretamente o erro médio de previsão; \
+O RMSE é mais sensível erros elevados; \
+O R² estima quão bem o modelo explica a variação nos valores observados.
 
 #### Features
 
@@ -777,7 +756,8 @@ balance_mom_change
 
 #### Divisão e seleção
 
-Por causa do caráter temporal, a divisão é cronológica e feita **por mês**, escolhendo os cortes para chegar perto de 70/20/10 das *linhas* (as linhas se concentram nos anos finais, então 70% das linhas não são 70% do tempo). Entre os conjuntos há **1 mês de folga** descartado: o label de T é o outflow de T+1, então sem folga o último mês de treino usaria como label um valor que já é feature do primeiro mês de validação.
+Devido ao caráter temporal, optou-se por uma a divisão cronológica dos dados, escolhendo os cortes para chegar perto de 70/20/10 das *linhas* (as linhas se concentram nos anos finais, então 70% das linhas não são 70% do tempo). \
+Entre os conjuntos há **1 mês de folga** descartado: o label de T é o outflow de T+1, então sem folga o último mês de treino usaria como label um valor que já é feature do primeiro mês de validação.
 
 ```text
 Treino     1993-01 .. 1997-10   122.618 linhas
@@ -787,7 +767,10 @@ Validação  1997-12 .. 1998-06    31.420 linhas
 Teste      1998-08 .. 1998-11    17.874 linhas
 ```
 
-Para cada modelo, 8 configurações de hiperparâmetros sorteadas (além da padrão) são ajustadas **só no treino** e comparadas na validação. O vencedor de cada algoritmo é reajustado em treino + validação e medido **uma vez** no teste. O modelo registrado é o de menor MAE de **validação**; o teste nunca decide a seleção (há um teste automatizado que corrompe o alvo do teste e confere que o vencedor não muda).
+Para cada modelo, 8 configurações de hiperparâmetros sorteadas (além da padrão) são ajustadas **só no treino** e comparadas na validação. \
+O vencedor de cada algoritmo é reajustado em treino + validação e medido **uma vez** no teste. \
+O modelo registrado é o de menor MAE de **validação**; \
+O teste nunca decide a seleção (há um teste automatizado que corrompe o alvo do teste e confere que o vencedor não muda).
 
 #### Resultados (execução de 2026-09-24)
 

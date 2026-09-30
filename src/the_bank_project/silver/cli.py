@@ -1,8 +1,12 @@
-"""CLI da Silver: `python -m the_bank_project.silver`."""
+"""
+    Bronze (`.parquet`) → Silver (`.parquet` limpos e tipados) [CLI]
+    Este módulo contém a CLI para executar a transformação de dados da camada Bronze para a Silver.
+    `python -m the_bank_project.silver`
+"""
 
-import argparse
-import logging
 import sys
+import logging
+import argparse
 from collections.abc import Sequence
 
 from the_bank_project.config import load_config
@@ -13,8 +17,10 @@ logger = logging.getLogger(__name__)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Executa Bronze → Silver. Retorna o código de saída do processo."""
-    argparse.ArgumentParser(prog="the_bank_project.silver", description="Bronze → Silver.").parse_args(argv)
+    """
+        Executa Bronze → Silver. 
+    """
+    argparse.ArgumentParser(prog="the_bank_project.silver", description="[Ingestão] Bronze → Silver").parse_args(argv)
     configure_logging()
     cfg = load_config()
     try:

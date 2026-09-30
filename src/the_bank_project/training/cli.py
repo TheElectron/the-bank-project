@@ -1,4 +1,6 @@
-"""CLI do treino: `python -m the_bank_project.training [labels|train|tune|promote]`."""
+"""
+    CLI do treino: `python -m the_bank_project.training [labels|train|tune|promote]`.
+"""
 
 import argparse
 import logging
@@ -16,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Executa a etapa pedida. Retorna o código de saída do processo."""
-    parser = argparse.ArgumentParser(prog="the_bank_project.training", description="Treino do modelo de gastos.")
+    parser = argparse.ArgumentParser(prog="the_bank_project.training", description="[ML] Criação das labels, treinamento, tunning e promoção dos modelos.")
     parser.add_argument("step", choices=["labels", "train", "tune", "promote"], help="Etapa a executar.")
     parser.add_argument(
         "--trials", type=int, default=None,

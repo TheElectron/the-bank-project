@@ -1,21 +1,22 @@
-"""Kaggle → Raw: baixa o dataset e guarda os `.csv` originais, sem alteração."""
+"""
+    Kaggle → Raw (`.csv`)
+    Este módulo contém funções para baixar e extrair datasets do Kaggle para a camada Raw. 
+"""
 
-import logging
 import os
 import shutil
-import tempfile
+import logging
 import zipfile
+import tempfile
 from pathlib import Path
-
 from the_bank_project.config import Settings
 
 logger = logging.getLogger(__name__)
 
 
 def _export_kaggle_credentials(settings: Settings) -> None:
-    """Expõe as credenciais do `.env` em `os.environ`, que é o que a lib `kaggle` lê.
-
-    Não sobrescreve variáveis já definidas no ambiente.
+    """
+        Expõe as credenciais do `.env` em `os.environ`, para leitura pela lib `kaggle`.
     """
     for name, value in {
         "KAGGLE_USERNAME": settings.kaggle_username,
@@ -27,34 +28,28 @@ def _export_kaggle_credentials(settings: Settings) -> None:
 
 
 def download_dataset(dataset: str, dest_dir: Path) -> Path:
-    """Baixa o dataset (.zip) do Kaggle para `dest_dir` e retorna o caminho do zip.
-
-    Raises:
-        RuntimeError: se o download terminar sem gerar um `.zip`.
+    """
+        Baixa o dataset (.zip) do Kaggle para `dest_dir` e retorna o caminho do zip.
+        Raises:
+            RuntimeError: se o download terminar sem gerar arquivo `.zip`.
     """
     _export_kaggle_credentials(Settings())
-    # Import tardio: a lib autentica já no import, e sem credenciais isso
-    # quebraria até o import deste módulo (e os testes).
+    # A lib realiza a autenticação no import, e sem credenciais isso quebraria, por isso o import tardio.
     from kaggle.api.kaggle_api_extended import KaggleApi
-
     api = KaggleApi()
     api.authenticate()
     api.dataset_download_files(dataset, path=str(dest_dir), unzip=False, quiet=True)
     zips = sorted(dest_dir.glob("*.zip"))
     if not zips:
-        raise RuntimeError(f"Download de '{dataset}' concluído, mas nenhum .zip em {dest_dir}.")
+        raise RuntimeError(f"Erro ao realizar o download de '{dataset}', arquivo não encontrado em {dest_dir}.")
     return zips[0]
 
 
 def extract_csvs(zip_path: Path, raw_dir: Path) -> list[Path]:
-    """Extrai só os `.csv` do zip para `raw_dir`, em estrutura plana.
-
-    Usa apenas o nome base de cada membro (protege contra path traversal) e
-    grava via arquivo temporário + `replace`, então reexecutar sobrescreve
-    sem deixar arquivo parcial.
-
-    Raises:
-        FileNotFoundError: se o zip não contiver nenhum `.csv`.
+    """
+        Extrai os arquivos `.csv` contidos no arquivo `.zip` para `raw_dir`.
+        Raises:
+            FileNotFoundError: se o `.zip` não possuir nenhum arquivo `.csv`.
     """
     raw_dir.mkdir(parents=True, exist_ok=True)
     extracted: list[Path] = []
@@ -75,24 +70,20 @@ def extract_csvs(zip_path: Path, raw_dir: Path) -> list[Path]:
 
 
 def download_to_raw(dataset: str, raw_dir: Path, force: bool = False) -> list[Path]:
-    """Garante os `.csv` originais do dataset em `raw_dir`.
+    """
+        Realiza o download e extração dos arquivos .csv do dataset para a camada Raw.
+        Args:
+            dataset: slug do dataset no Kaggle (`dono/nome`).
+            raw_dir: pasta de destino na camada Raw.
+            force: sobrescreve os arquivos na pasta de destino.
 
-    Idempotente: se já houver `.csv` na Raw, não baixa de novo (use `force=True`
-    para refazer o download).
-
-    Args:
-        dataset: slug do dataset no Kaggle (`dono/nome`).
-        raw_dir: pasta de destino da camada Raw.
-        force: baixa e sobrescreve mesmo que a Raw já esteja populada.
-
-    Returns:
-        Caminhos dos `.csv` na Raw, em ordem alfabética.
+        Returns:
+            Paths dos `.csv` na Raw, em ordem alfabética.
     """
     existing = sorted(raw_dir.glob("*.csv"))
     if existing and not force:
         logger.info("Raw já populada (%d .csv em %s); pulando download.", len(existing), raw_dir)
         return existing
-
     logger.info("Baixando '%s' do Kaggle...", dataset)
     with tempfile.TemporaryDirectory(prefix="kaggle_") as tmp:
         zip_path = download_dataset(dataset, Path(tmp))

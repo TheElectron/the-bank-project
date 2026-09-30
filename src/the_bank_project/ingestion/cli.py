@@ -1,8 +1,12 @@
-"""CLI da ingestão: `python -m the_bank_project.ingestion [raw|bronze|all]`."""
+"""
+    Kaggle → Raw (`.csv`) → Bronze (`.parquet`) [CLI]
+    Este módulo contém a CLI para executar a ingestão de dados do Kaggle para a camada Raw e da camada Raw para a Bronze.
+    `python -m the_bank_project.ingestion [raw|bronze|all]`
+"""
 
-import argparse
-import logging
 import sys
+import logging
+import argparse
 from collections.abc import Sequence
 
 from the_bank_project.config import load_config
@@ -10,21 +14,20 @@ from the_bank_project.ingestion.bronze import to_bronze
 from the_bank_project.ingestion.raw import download_to_raw
 from the_bank_project.logging_config import configure_logging
 
+
 logger = logging.getLogger(__name__)
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Define os argumentos da CLI."""
-    parser = argparse.ArgumentParser(prog="the_bank_project.ingestion", description="Ingestão Kaggle → Raw → Bronze.")
+    parser = argparse.ArgumentParser(prog="the_bank_project.ingestion", description="[Ingestão] Kaggle → Raw → Bronze")
     parser.add_argument(
-        "step", nargs="?", choices=["raw", "bronze", "all"], default="all", help="Etapa a executar (padrão: all)."
+        "step", nargs="?", choices=["raw", "bronze", "all"], default="all", help="Etapa que será executada (padrão: all)."
     )
-    parser.add_argument("--force", action="store_true", help="Baixa de novo mesmo com a Raw já populada.")
+    parser.add_argument("--force", action="store_true", help="Sobrescreve arquivos existentes na Raw (não afeta a Bronze).")
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Executa a etapa pedida. Retorna o código de saída do processo."""
     args = build_parser().parse_args(argv)
     configure_logging()
     cfg = load_config()

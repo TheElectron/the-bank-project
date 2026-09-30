@@ -1,4 +1,6 @@
-"""Checks de qualidade da Gold: PKs, nulos, integridade e consistência das janelas."""
+"""
+    Validações de qualidade para a Gold.
+"""
 
 import numpy as np
 import pandas as pd
@@ -13,7 +15,7 @@ TOLERANCE = 0.01
 
 
 class GoldQualityError(ValueError):
-    """A Gold violou uma regra de qualidade; carrega todas as violações encontradas."""
+    """Uma regra de qualidade foi violada."""
 
 
 def _null_columns(df: pd.DataFrame, columns: list[str]) -> list[str]:
@@ -21,14 +23,15 @@ def _null_columns(df: pd.DataFrame, columns: list[str]) -> list[str]:
 
 
 def check_gold(account: pd.DataFrame, monthly: pd.DataFrame, silver_account: pd.DataFrame) -> None:
-    """Valida as duas tabelas e levanta `GoldQualityError` listando todas as violações.
-
-    Regras: PKs únicas; sem nulos onde não pode haver; `account` cobre exatamente
-    as contas da Silver; toda conta da mensal existe na cadastral; meses
-    contíguos por conta; janelas coerentes (`outflow_3m_sum` >= saída do mês,
-    lag de um mês bate com o mês anterior). O saldo não é conferido contra o fluxo: o
-    `balance` do Berka não fecha como razão contábil (~25% dos meses), então
-    `opening_balance` é só uma estimativa.
+    """
+        Valida as tabelas da camada Gold e gera `GoldQualityError` caso encontre violações das regras de qualidade.
+        Regras: 
+        - PKs únicas; 
+        - Valores não nulos nas colunas obrigatórias; 
+        - Todas as contas da Silver estão na Gold; 
+        - Todas as contas estão presentes em ambas as tabelas; 
+        - Não existem lacunas nos meses na tabela de movimentações mensais; 
+        - Valores coerentes (`outflow_3m_sum` >= saída do mês, lag de um mês bate com o mês anterior, etc.);
     """
     errors: list[str] = []
     if account["account_id"].duplicated().any():
@@ -36,7 +39,7 @@ def check_gold(account: pd.DataFrame, monthly: pd.DataFrame, silver_account: pd.
     if monthly.duplicated(["account_id", "reference_month"]).any():
         errors.append("gold_account_monthly_movements: (account_id, reference_month) duplicado")
     if set(account["account_id"]) != set(silver_account["account_id"]):
-        errors.append("gold_account: contas diferentes das da Silver")
+        errors.append("gold_account: discrepância entre o total de contas da Silver e Gold")
     if not set(monthly["account_id"]) <= set(account["account_id"]):
         errors.append("gold_account_monthly_movements: conta sem correspondente em gold_account")
     if nulls := _null_columns(account, NOT_NULL_ACCOUNT):

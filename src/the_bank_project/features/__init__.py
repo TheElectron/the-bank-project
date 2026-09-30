@@ -1,4 +1,7 @@
-"""Único ponto de acesso às features (Feast): treino (offline) e serving (online)."""
+"""
+    Feast
+    Ponto de acesso às features: treino (offline) e serving (online).
+"""
 
 from the_bank_project.features.store import (
     FeatureReader,

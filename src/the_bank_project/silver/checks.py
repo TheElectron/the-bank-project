@@ -1,4 +1,6 @@
-"""Checks de qualidade da Silver: chaves únicas e integridade referencial."""
+"""
+    Este módulo contém funções para validação das regras qualidade de dados na camada Silver.
+"""
 
 import pandas as pd
 
@@ -20,14 +22,20 @@ FOREIGN_KEYS = (
 
 
 class DataQualityError(ValueError):
-    """A Silver violou uma regra de qualidade; carrega todas as violações encontradas."""
+    """
+        Classe para erros de qualidade de dados na Silver. 
+        A mensagem deve listar todas as violações encontradas.
+    """
 
 
 def check_silver(silver: dict[str, pd.DataFrame]) -> None:
-    """Valida a Silver inteira e levanta `DataQualityError` listando todas as violações.
-
-    Regras: PKs únicas e não nulas; FKs presentes na tabela pai; toda conta com
-    exatamente 1 titular; cartão só em titular (README, "Camada Silver").
+    """
+        Valida a todas as tabelas da camada Silver inteira, listando todas as violações encontradas.
+        Regras: 
+        - PKs únicas e não nulas; 
+        - FKs presentes na tabela pai; 
+        - Toda conta possui exatamente 1 titular; 
+        - Todo cartão está associado a um titular.
     """
     errors: list[str] = []
     for table, pk in PRIMARY_KEYS.items():
