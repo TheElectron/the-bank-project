@@ -3,12 +3,13 @@
     Este módulo contém funções para baixar e extrair datasets do Kaggle para a camada Raw. 
 """
 
+import logging
 import os
 import shutil
-import logging
-import zipfile
 import tempfile
+import zipfile
 from pathlib import Path
+
 from the_bank_project.config import Settings
 
 logger = logging.getLogger(__name__)

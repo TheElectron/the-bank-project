@@ -1,4 +1,8 @@
-"""CLI do monitoramento: `python -m the_bank_project.monitoring [drift|push|retrain-check]`."""
+"""
+    Monitoramento [CLI]
+    Este módulo contém a CLI para executar o monitoramento.
+    `python -m the_bank_project.monitoring [drift|push|retrain-check]`
+"""
 
 import argparse
 import logging
@@ -15,7 +19,9 @@ logger = logging.getLogger(__name__)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Executa a etapa pedida. Drift detectado é resultado, não erro: só falha se a etapa quebrar."""
+    """
+        Executa a etapa pedida. Drift detectado é resultado, não erro: só falha se a etapa quebrar.
+    """
     parser = argparse.ArgumentParser(prog="the_bank_project.monitoring", description="Monitoramento de drift.")
     parser.add_argument(
         "step", choices=["drift", "push", "retrain-check"], nargs="?", default="drift",

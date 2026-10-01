@@ -1,8 +1,10 @@
-"""Tuning de hiperparâmetros com Optuna (TPE) e validação cruzada temporal.
+"""
+    Tuning de hiperparâmetros
+    Este módulo contém o tuning com Optuna (TPE) e validação cruzada temporal.
 
-As dobras usam só os meses de **treino**: a validação continua limpa para escolher o campeão entre os
-algoritmos e o teste para a avaliação final. Requer o grupo `tuning` do Poetry (dev/CI); o treino em
-produção só lê o resultado (`tuned_params`).
+    As dobras usam só os meses de **treino**: a validação continua limpa para escolher o campeão entre os
+    algoritmos e o teste para a avaliação final. Requer o grupo `tuning` do Poetry (dev/CI); o treino em
+    produção só lê o resultado (`tuned_params`).
 """
 
 import logging
@@ -29,7 +31,9 @@ Folds = list[tuple[np.ndarray, np.ndarray]]
 
 
 def suggest(trial: optuna.Trial, space: dict[str, SpaceSpec]) -> Params:
-    """Sorteia uma configuração do espaço (`int`, `float`, `log` ou `cat`)."""
+    """
+        Sorteia uma configuração do espaço (`int`, `float`, `log` ou `cat`).
+    """
     params: Params = {}
     for name, (kind, *args) in space.items():
         if kind == "int":
@@ -44,7 +48,9 @@ def suggest(trial: optuna.Trial, space: dict[str, SpaceSpec]) -> Params:
 
 
 def cv_mae(cand: Candidate, params: Params, ds: Dataset, folds: Folds, cfg: GlobalConfig) -> tuple[float, list[float]]:
-    """MAE médio (escala original) de `params` nas dobras, e o MAE de cada dobra."""
+    """
+        MAE médio (escala original) de `params` nas dobras, e o MAE de cada dobra.
+    """
     tc = cfg.training
     maes = []
     for train, val in folds:
@@ -54,7 +60,9 @@ def cv_mae(cand: Candidate, params: Params, ds: Dataset, folds: Folds, cfg: Glob
 
 
 def tune_candidate(cand: Candidate, ds: Dataset, folds: Folds, cfg: GlobalConfig, day: date) -> TunedModel:
-    """Busca a melhor configuração de um modelo; se nenhuma bater a padrão nas mesmas dobras, mantém a padrão."""
+    """
+        Busca a melhor configuração de um modelo; se nenhuma bater a padrão nas mesmas dobras, mantém a padrão.
+    """
     tc, tu = cfg.training, cfg.tuning
     with mlflow.start_run(run_name=run_name("tuning", cand.name, day)):
         default_mae, _ = cv_mae(cand, cand.defaults, ds, folds, cfg)
@@ -88,10 +96,11 @@ def tune_candidate(cand: Candidate, ds: Dataset, folds: Folds, cfg: GlobalConfig
 def run_tuning(
     cfg: GlobalConfig, dataset: Dataset | None = None, day: date | None = None, out: Path | None = None
 ) -> BestParams:
-    """Ajusta todos os candidatos com espaço de busca e grava `best_params.yaml`.
+    """
+        Ajusta todos os candidatos com espaço de busca e grava `best_params.yaml`.
 
-    Raises:
-        ValueError: se os meses de treino não bastarem para as dobras configuradas.
+        Raises:
+            ValueError: se os meses de treino não bastarem para as dobras configuradas.
     """
     day = day or date.today()
     ds, split = prepare(cfg, dataset)

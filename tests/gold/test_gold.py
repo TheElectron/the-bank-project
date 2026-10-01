@@ -122,7 +122,7 @@ def test_check_gold_passes_on_valid_tables(silver: dict[str, pd.DataFrame]):
     [
         (lambda a, m: (pd.concat([a, a.iloc[:1]]), m), "account_id: chave duplicada"),
         (lambda a, m: (a, pd.concat([m, m.iloc[:1]])), "duplicado"),
-        (lambda a, m: (a.iloc[:1], m), "diferentes das da Silver"),
+        (lambda a, m: (a.iloc[:1], m), "discrepância entre o total de contas"),
         (lambda a, m: (a.assign(owner_gender=pd.NA), m), "nulos em"),
         (lambda a, m: (a, m.assign(closing_balance=pd.NA)), "nulos em"),
         (lambda a, m: (a, m.drop(m.index[1])), "não contíguos"),

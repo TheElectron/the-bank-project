@@ -1,4 +1,7 @@
-"""Modelo campeão do MLflow: carga, contrato com a feature store e detecção de troca de campeão."""
+"""
+    Modelo campeão (MLflow)
+    Este módulo contém a carga do campeão, o contrato com a feature store e a detecção de troca de campeão.
+"""
 
 import logging
 import re
@@ -36,7 +39,9 @@ RUN_NAME = re.compile(r"^treino_(?P<model>.+)_\d{4}-\d{2}-\d{2}$")
 
 
 def _importances(model: object, names: list[str]) -> dict[str, float]:
-    """Importância global das features, quando o algoritmo a expõe (árvores e XGBoost); vazio nos demais."""
+    """
+        Importância global das features, quando o algoritmo a expõe (árvores e XGBoost); vazio nos demais.
+    """
     inner: Any = getattr(model, "regressor_", model)  # TransformedTargetRegressor (alvo em log1p)
     inner = inner[-1] if hasattr(inner, "steps") else inner  # Pipeline: o último passo é o estimador
     values = getattr(inner, "feature_importances_", None)
@@ -46,18 +51,24 @@ def _importances(model: object, names: list[str]) -> dict[str, float]:
 
 
 class ContractError(RuntimeError):
-    """O modelo espera features que a feature store não serve (ou o contrário)."""
+    """
+        O modelo espera features que a feature store não serve (ou o contrário).
+    """
 
 
 class Predictor(Protocol):
-    """O que a API pede ao modelo do MLflow (um estimador ou pipeline do scikit-learn)."""
+    """
+        O que a API pede ao modelo do MLflow (um estimador ou pipeline do scikit-learn).
+    """
 
     def predict(self, X: pd.DataFrame) -> np.ndarray: ...
 
 
 @dataclass(frozen=True)
 class ModelBundle:
-    """Um modelo carregado: o estimador, a ordem das colunas de entrada e o que a interface mostra dele."""
+    """
+        Um modelo carregado: o estimador, a ordem das colunas de entrada e o que a interface mostra dele.
+    """
 
     model: Predictor
     input_names: list[str]
@@ -65,7 +76,9 @@ class ModelBundle:
 
 
 class ModelStore:
-    """Mantém o `champion` em memória e o troca, sem parar o servidor, quando o alias muda."""
+    """
+        Mantém o `champion` em memória e o troca, sem parar o servidor, quando o alias muda.
+    """
 
     def __init__(self, cfg: GlobalConfig, service_features: list[str], client: MlflowClient | None = None) -> None:
         mlflow.set_tracking_uri(tracking_uri(cfg))
@@ -86,7 +99,9 @@ class ModelStore:
             return None
 
     def refresh(self) -> bool:
-        """Carrega o campeão se ele mudou desde a última carga. Um campeão incompatível não substitui o atual."""
+        """
+            Carrega o campeão se ele mudou desde a última carga. Um campeão incompatível não substitui o atual.
+        """
         version = self._champion_version()
         if version is None or (self._bundle and self._bundle.info.version == version):
             return False
@@ -144,10 +159,11 @@ class ModelStore:
         )
 
     def _comparison(self, test_window: str | None, champion: str, champion_start_ms: int | None) -> list[ComparisonRow]:
-        """Baselines e candidatos do mesmo treino do campeão, o run mais recente de cada um.
+        """
+            Baselines e candidatos do mesmo treino do campeão, o run mais recente de cada um.
 
-        "Mesmo treino" = mesma janela de teste e início dentro de `SAME_TRAINING_HOURS` do run do campeão: sem
-        isso, um treino posterior (ex.: um challenger que perdeu no gate) apareceria com os números do campeão.
+            "Mesmo treino" = mesma janela de teste e início dentro de `SAME_TRAINING_HOURS` do run do campeão: sem
+            isso, um treino posterior (ex.: um challenger que perdeu no gate) apareceria com os números do campeão.
         """
         exp = mlflow.get_experiment_by_name(self._cfg.training.experiment)
         if exp is None or not test_window:

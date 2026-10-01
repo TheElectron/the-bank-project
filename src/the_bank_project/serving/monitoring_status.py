@@ -1,6 +1,9 @@
-"""Estado do monitoramento para a interface: lê o último resumo de drift e o último re-treino, sem recalcular nada.
+"""
+    Estado do monitoramento
+    Este módulo contém as funções que leem o último resumo de drift e o último re-treino para a interface,
+    sem recalcular nada.
 
-Os arquivos são gravados pela DAG `monitoring` em `data/monitoring/` (a API os monta somente leitura).
+    Os arquivos são gravados pela DAG `monitoring` em `data/monitoring/` (a API os monta somente leitura).
 """
 
 import logging
@@ -14,7 +17,9 @@ TOP_DRIFTED = 5
 
 
 def read_status(cfg: GlobalConfig) -> MonitoringStatus:
-    """`available=False` se o drift ainda não rodou (ou se o arquivo estiver ilegível: a interface segue sem ele)."""
+    """
+        `available=False` se o drift ainda não rodou (ou se o arquivo estiver ilegível: a interface segue sem ele).
+    """
     out_dir = cfg.paths.monitoring
     try:
         summary = load_summary(out_dir)

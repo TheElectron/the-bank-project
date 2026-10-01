@@ -16,7 +16,7 @@ a Gold (`gold_account`, `gold_account_monthly_movements`) já segue essa entidad
 
 Interface via Makefile (`make help`):
 
-- Qualidade: `install`, `lint`, `format`, `typecheck`, `test`, `check` (= o que o CI roda), `hooks`, `clean`.
+- Qualidade: `install`, `lint` (só `ruff check`), `format` (só `ruff check --fix`), `typecheck`, `test`, `check` (= o que o CI roda), `hooks`, `clean`.
 - Dados: `ingest` (Kaggle → Raw → Bronze), `silver`, `gold`, `features` (Feast apply + materialize).
 - Modelo: `labels`, `train`, `tune` (Optuna + CV temporal → `configs/best_params.yaml`, grupo `tuning`), `promote` (gate do MLflow).
 - Monitoramento: `drift` (Evidently: treino x últimos meses da Gold, saída em `data/monitoring/`), `retrain-check` (decisão de re-treino, sem efeito colateral).
@@ -29,6 +29,11 @@ Interface via Makefile (`make help`):
   `the_bank_project.features`; definições do Feast em `feature_repo/features.py` (schema explícito + teste de contrato).
 - Pacote em `src/the_bank_project/` (layout src); testes espelham o pacote em `tests/`.
 - Type hints obrigatórios (mypy com `disallow_untyped_defs`); docstrings no formato Google.
+- **Estilo de docstring (Fase 9c):** toda docstring abre e fecha as aspas em linha própria, com o texto indentado
+  4 espaços a mais que as aspas. Módulo: título, linha "Este módulo contém…" e, se houver, o "porquê" e o comando da
+  CLI (`[CLI]` no título). Função: resumo ("Método responsável por…"/verbo no infinitivo) e, quando couber,
+  `Args`/`Returns`/`Raises`. **Não rodar `ruff format`**: ele remove essa indentação (por isso saiu do `make lint`, do CI
+  e do pre-commit). Linhas até 120 colunas (E501).
 - Config em `configs/*.yaml` validada via Pydantic (`the_bank_project.config`); segredos em `.env` (modelo em `.env.example`). Nada de paths hardcoded.
 - Um step de pipeline = função pura + CLI, testável sem Airflow; DAGs só envolvem o código do pacote.
 - Airflow roda só em imagem Docker própria (`docker/airflow/`), fora do `pyproject.toml`. O código do projeto

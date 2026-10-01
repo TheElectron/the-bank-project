@@ -1,6 +1,8 @@
-"""Catálogo de contas e meses da interface: quem existe, em que mês há valor real e o conjunto do treino.
+"""
+    Catálogo de contas e meses
+    Este módulo contém o catálogo usado pela interface: quem existe, em que mês há valor real e o conjunto do treino.
 
-Vem dos labels (o futuro conhecido, fora do Feast) e dos atributos cadastrais, que passam pelo Feast.
+    Vem dos labels (o futuro conhecido, fora do Feast) e dos atributos cadastrais, que passam pelo Feast.
 """
 
 from collections.abc import Sequence
@@ -29,7 +31,9 @@ MONTH_NAMES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "o
 
 
 def month_end(value: Any) -> pd.Timestamp:
-    """Último dia (à meia-noite) do mês de `value`."""
+    """
+        Último dia (à meia-noite) do mês de `value`.
+    """
     return (pd.Timestamp(value) + pd.offsets.MonthEnd(0)).normalize()
 
 
@@ -42,7 +46,9 @@ def _none_if_na(value: Any) -> Any:
 
 
 class AccountCatalog:
-    """Consultas em memória sobre contas e meses (4,5 mil contas, 180 mil pares conta x mês)."""
+    """
+        Consultas em memória sobre contas e meses (4,5 mil contas, 180 mil pares conta x mês).
+    """
 
     def __init__(self, labels: pd.DataFrame, static: pd.DataFrame, split: SplitConfig) -> None:
         labels = labels.assign(account_id=labels["account_id"].astype(str))
@@ -87,11 +93,15 @@ class AccountCatalog:
 
     @property
     def latest_month(self) -> pd.Timestamp:
-        """Mês mais recente com features (o seguinte ao último com valor real)."""
+        """
+            Mês mais recente com features (o seguinte ao último com valor real).
+        """
         return self._latest_month
 
     def months(self) -> list[MonthInfo]:
-        """Mais recente primeiro: o mês futuro (sem valor real) e depois os meses com valor real."""
+        """
+            Mais recente primeiro: o mês futuro (sem valor real) e depois os meses com valor real.
+        """
         latest = MonthInfo(reference_month=None, label=f"Mais recente ({month_label(self._latest_month)})",
                            split=None, has_actual=False, n_accounts=self.n_accounts)  # fmt: skip
         history = [
@@ -107,7 +117,9 @@ class AccountCatalog:
         return [latest, *history]
 
     def pairs(self, split: Split) -> pd.DataFrame:
-        """Pares (conta, mês T) do conjunto `split`, com o valor real de T+1 em `actual`."""
+        """
+            Pares (conta, mês T) do conjunto `split`, com o valor real de T+1 em `actual`.
+        """
         keep = self._labels["event_timestamp"].map(self._split_of) == split
         return self._labels.loc[keep].rename(columns={TARGET: "actual"}).reset_index(drop=True)
 
@@ -118,7 +130,9 @@ class AccountCatalog:
         return self._split_of.get(month)
 
     def actual(self, account_id: str, month: pd.Timestamp) -> float | None:
-        """Saídas reais de `month` + 1, se conhecidas."""
+        """
+            Saídas reais de `month` + 1, se conhecidas.
+        """
         value = self._actual.get((account_id, month))
         return None if value is None or pd.isna(value) else float(value)
 
@@ -129,13 +143,17 @@ class AccountCatalog:
         return self._all if month is None else self._by_month.get(month, [])
 
     def search(self, month: pd.Timestamp | None, query: str, limit: int, offset: int) -> tuple[int, list[AccountInfo]]:
-        """Contas disponíveis no mês (todas se `month` é nulo) cujo id contém `query`, por id numérico."""
+        """
+            Contas disponíveis no mês (todas se `month` é nulo) cujo id contém `query`, por id numérico.
+        """
         pool = self._pool(month)
         hits = [a for a in pool if query in a] if query else pool
         return len(hits), [self._info[a] for a in hits[offset : offset + limit]]
 
     def sample(self, month: pd.Timestamp | None, n: int, seed: int | None = None) -> list[AccountInfo]:
-        """`n` contas sorteadas entre as disponíveis no mês."""
+        """
+            `n` contas sorteadas entre as disponíveis no mês.
+        """
         pool = self._pool(month)
         picks: Sequence[int] = (
             np.random.default_rng(seed).choice(len(pool), size=min(n, len(pool)), replace=False).tolist()
@@ -146,6 +164,8 @@ class AccountCatalog:
 
 
 def load_catalog(reader: FeatureReader, labels: pd.DataFrame, split: SplitConfig) -> AccountCatalog:
-    """Monta o catálogo: os atributos de todas as contas vêm do online store."""
+    """
+        Monta o catálogo: os atributos de todas as contas vêm do online store.
+    """
     ids = sorted(labels["account_id"].astype(str).unique(), key=int)
     return AccountCatalog(labels, reader.online(ids, STATIC_REFS), split)

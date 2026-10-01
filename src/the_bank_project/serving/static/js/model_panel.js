@@ -26,7 +26,7 @@ function paramsBlock(m) {
   const log = m.params?.log_target;
   return h("div", {},
     h("div", { class: "table-wrap" }, h("table", { class: "plain" },
-      h("caption", {}, m.params_source ? PARAMS_SOURCE[m.params_source] ?? m.params_source : "Origem dos hiperparâmetros não registrada"),
+      h("caption", {}, m.params_source ? PARAMS_SOURCE[m.params_source] ?? m.params_source : "Origem não registrada (run anterior ao registro da origem)"),
       h("tbody", {}, shown.map(([k, v]) => h("tr", { style: { cursor: "default" } }, h("td", {}, h("code", {}, k)), h("td", {}, paramValue(v))))))),
     log != null ? h("p", { class: "note" }, `Alvo treinado em escala log: ${log === "True" || log === "true" ? "sim" : "não"}${m.params?.seed ? ` · semente ${m.params.seed}` : ""}.`) : null);
 }
@@ -82,7 +82,7 @@ function monitoringCard(m, s) {
   if (!s?.available) {
     return h("div", { class: "card reveal wide", style: { "--d": 3 } }, h("h3", {}, "Saúde dos dados"),
       h("p", { class: "sub" }, "Monitoramento de drift (Evidently)."),
-      h("p", { class: "note" }, "Ainda não há relatório de drift. Ele é gerado pela DAG `monitoring` (semanal) ou por `make drift`."));
+      h("p", { class: "note" }, "Ainda não há relatório de drift. Ele é gerado pela DAG ", h("code", {}, "monitoring"), " (semanal) ou por ", h("code", {}, "make drift"), "."));
   }
   const detected = s.drift_detected;
   const near = !detected && s.drift_share >= 0.8 * s.drift_share_threshold;

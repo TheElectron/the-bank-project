@@ -206,6 +206,7 @@ main { max-width: 1320px; margin: 0 auto; padding: 0 28px 64px; }
 .dl dt { color: var(--ink-3); padding: 8px 0; border-bottom: 1px dotted var(--line-strong); }
 .dl dd { margin: 0; padding: 8px 0; border-bottom: 1px dotted var(--line-strong); color: var(--ink); font-variant-numeric: tabular-nums; }
 .dl dd .badge { font-size: 0.7rem; padding: 3px 8px; margin-left: 4px; }
+.note code { font: 500 0.86em/1 ui-monospace, "SFMono-Regular", Menlo, monospace; color: var(--ink-2); }
 table.plain td:first-child code { font: 500 0.82rem/1 ui-monospace, "SFMono-Regular", Menlo, monospace; color: var(--ink-2); }
 table.plain tbody tr:hover { background: transparent; }
 table.plain td { padding: 8px 12px; }

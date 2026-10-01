@@ -1,7 +1,10 @@
-"""Publica o resumo de drift no Prometheus via Pushgateway (o job é em lote: o Prometheus não o alcança por scrape).
+"""
+    Métricas de drift (Pushgateway)
+    Este módulo contém as funções que publicam o resumo de drift no Prometheus via Pushgateway
+    (o job é em lote: o Prometheus não o alcança por scrape).
 
-Usa um coletor próprio em vez de `Gauge`: importar o Feast liga o modo multiprocesso do `prometheus_client`
-(ver `serving/metrics.py`), e `Gauge` exigiria um diretório de valores compartilhados.
+    Usa um coletor próprio em vez de `Gauge`: importar o Feast liga o modo multiprocesso do `prometheus_client`
+    (ver `serving/metrics.py`), e `Gauge` exigiria um diretório de valores compartilhados.
 """
 
 import logging
@@ -20,7 +23,9 @@ JOB = "drift"
 
 
 class DriftCollector(Collector):
-    """Expõe um `DriftSummary` como gauges (`drift_*`)."""
+    """
+        Expõe um `DriftSummary` como gauges (`drift_*`).
+    """
 
     def __init__(self, summary: DriftSummary, last_retrain_at: datetime | None = None) -> None:
         self.summary = summary
@@ -59,10 +64,11 @@ class DriftCollector(Collector):
 
 
 def push_drift(summary: DriftSummary, url: str, timeout: float = 10, last_retrain_at: datetime | None = None) -> None:
-    """Envia o resumo ao Pushgateway, substituindo o grupo anterior (features removidas somem).
+    """
+        Envia o resumo ao Pushgateway, substituindo o grupo anterior (features removidas somem).
 
-    Raises:
-        OSError: se o Pushgateway não responder (`URLError` é subclasse).
+        Raises:
+            OSError: se o Pushgateway não responder (`URLError` é subclasse).
     """
     registry = CollectorRegistry()
     registry.register(DriftCollector(summary, last_retrain_at))

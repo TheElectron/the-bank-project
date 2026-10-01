@@ -1,4 +1,7 @@
-"""Métricas Prometheus da API. Um registro por app, para os testes não compartilharem estado."""
+"""
+    Métricas Prometheus da API
+    Este módulo contém as métricas da API. Um registro por app, para os testes não compartilharem estado.
+"""
 
 from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, generate_latest, values
 
@@ -12,7 +15,9 @@ OUTFLOW_BUCKETS = (0, 500, 1_000, 2_500, 5_000, 10_000, 20_000, 50_000, 100_000,
 
 
 class ServingMetrics:
-    """Contadores, histogramas e gauges expostos em `/metrics`."""
+    """
+        Contadores, histogramas e gauges expostos em `/metrics`.
+    """
 
     def __init__(self) -> None:
         self.registry = CollectorRegistry()
@@ -38,7 +43,9 @@ class ServingMetrics:
         self._current: tuple[str, str, str] | None = None
 
     def set_model(self, name: str, version: str, algorithm: str, loaded_at: float) -> None:
-        """Marca o campeão atual (zera as versões anteriores, para o Grafana ver só a vigente)."""
+        """
+            Marca o campeão atual (zera as versões anteriores, para o Grafana ver só a vigente).
+        """
         if self._current is not None:
             self.model_info.remove(*self._current)
         self._current = (name, version, algorithm)

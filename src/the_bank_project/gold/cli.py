@@ -6,9 +6,9 @@
 
 
 
-import sys
-import logging
 import argparse
+import logging
+import sys
 from collections.abc import Sequence
 
 from the_bank_project.config import load_config

@@ -1,9 +1,18 @@
 # The Bank Project
 
+## Introdução
+
+Este projeto tem como objetivo **prever quanto cada cliente vai gastar no próximo mês**. \
+A partir do cojunto de dados [Berka](https://www.kaggle.com/datasets/marceloventura/the-berka-dataset), que reune aproximadamente 1 milhão de transações, realizadas por 4.500 contas pertencentes a 5.369 clientes de um banco tcheco durante o período de 1993 a 1998. \
+Estimou-se o **total de saídas de uma conta no mês seguinte** em coroas tchecas (Kč), utilizando diferentes modelos de regressão (Regressão linear, Random Forest, Gradient Boosting e XGBoost). \
+Durante a etapa de testes, com dados de agosto e novembro de 1998, o modelo que se destacou foi o Random Forest, com erro médio (MAE) de ~6,5 mil Kč por conta-mês, 20% menos que o baseline de "repetir a média dos 3 meses anteriores".
+
 O projeto consiste em 3 etapas.
 - Extração, processamento, enriquecimento e armazenamento dos dados utilizados;
-- Geração de um modelo de ML;
-- Geração de um chat conversacional;
+- Geração de um modelo de ML (treino, registro, serving por API e monitoramento de drift);
+- Geração de um chat conversacional (**ainda não iniciada**);
+
+Tudo roda local, sem cloud!
 
 ## Pipeline
 
@@ -18,25 +27,114 @@ Cada etapa do pipeline é idempotente (reexecutar sobrescreve o resultado, sem d
 | `make silver`    | [INGESTÃO] Bronze (`.parquet`) → Silver (`.parquet` limpo e tipado) |
 | `make gold`      | [INGESTÃO] Silver → Gold (`gold_account` e `gold_account_monthly_movements`) |
 | `make features`  | [ML] Criação e configuração da feature store |
-| `make labels`    | [ML] Labels para o modelo de regressão (`next_month_outflow`) a partir da Gold |
+| `make labels`    | [ML] Criação das labels para o modelo de regressão (`next_month_outflow`) a partir da Gold |
 | `make train`     | [ML] Treinamento dos modelos e registro no MLflow |
 | `make tune`      | [ML] Tuning de hiperparâmetros com Optuna e cross-validation temporal |
 | `make promote`   | [ML] Promove o `challenger` caso supere os resultados do atual `champion` |
 | `make serve`     | [API] Interface web para inferência em tempo real |
 | `make drift`     | [MONITORAMENTO] Relatório de drift, via Evidently |
 | `make retrain-check` | [MONITORAMENTO] Verifica a necessidade de re-treino por drift |
-| `make up`/`down` | [CI/CD] Sobe e/ou derruba os containers: Airflow (:8080), o MLflow (:5000), a API (:8000), o Prometheus (:9090) e o Grafana (:3000) |
+| `make up`/`down` | [CI/CD] Sobe ou derruba os containers: Airflow (:8080), o MLflow (:5000), a API (:8000), o Prometheus (:9090), o Pushgateway (:9091) e o Grafana (:3000) |
 | `make monitoring-check` | [CI/CD] Valida `prometheus.yml` e `alerts.yml` com o `promtool` |
 | `make cd-check`  | [CI/CD] Valida o GitHub Container Registry e realiza o smoke test das imagens locais |
 | `make check`     | [CI/CD] Lint, type check e testes |
 
 Nota: para baixar os arquivos brutos, as credenciais do Kaggle precisam estar no arquivo `.env`, conforme o modelo em `.env.example`.
 
+### Executando o projeto
+
+**0. Pré-requisitos:** 
+Conta na Kaggle (KAGGLE_API_TOKEN);
+Python 3.12;
+Poetry 2.x;
+Docker Docker Compose;
+16 GB de RAM (GPU é opcional)
+
+**1. Configurando o ambiente**
+
+```bash
+git clone https://github.com/TheElectron/the-bank-project.git && cd the-bank-project
+make install
+cp .env.example .env
+```
+
+**2. Subir a infraestrutura**
+
+```bash
+make up
+```
+
+| Serviço     | Endereço              | Observação                                             |
+| ----------- | --------------------- | ------------------------------------------------------ |
+| Airflow     | http://localhost:8080 | Sem tela de login (só local)                           |
+| MLflow      | http://localhost:5000 | Experimento `regressao_outflow` e registry `outflow_regression` |
+| API + UI    | http://localhost:8000 | Retorna 503 no `/health` até existir um `champion`    |
+| Prometheus  | http://localhost:9090 |                                                        |
+| Pushgateway | http://localhost:9091 |                                                        |
+| Grafana     | http://localhost:3000 | Dashboards  (`admin`/`admin` para editar)              |
+
+**3. Gerar os dados (Kaggle → Gold → Feast)**
+
+```bash
+make ingest silver gold labels features
+```
+Ou no Airflow, ative e dispare a DAG `data_pipeline`.
+
+**4. Treinar o modelo e promover o campeão** 
+
+```bash
+make train
+make promote
+```
+Ou no Airflow, dispare a DAG `training`. \
+O treinamento dura aproximadamente 7 min com as configurações atuais `configs/best_params.yaml` atual. \
+Opcional: 
+```bash
+make tune
+```
+Para realizar o tuning (~35 min de duração) e gera o arquivo `configs/best_params.yaml`.
+
+**5. Interface Web**
+
+Após realizar a promoção do modelo, abra http://localhost:8000. 
+
+A API consulta o alias `champion` a cada 60 s, então **não precisa reiniciar** o container. \
+Ao receber 200 no `/health` a interface carrega as seções Modelo e Desempenho. \
+Documentação disponĩvel em http://localhost:8000/docs. \
+Opcional:
+```bash
+make serve
+```
+Sobe a API localmente (precisa de `MLFLOW_TRACKING_URI` no `.env`).
+
+**6. Monitoramento** 
+
+```bash
+make drift
+```
+Gera o relatório do Evidently em `data/monitoring/`, aproximadamente ~8 min.
+
+```bash
+make retrain-check
+```
+Valida o re-treino (sem disparar nada). \
+O painel "Drift de dados" fica no dashboard do Grafana, e a interface da API lê o mesmo resumo na seção Modelo. \
+Ou rode a DAG `monitoring` no Airflow (publica o resumo no Pushgateway e dispara a `training` se houver drift). 
+
+**7. Encerrar e verificar**
+
+```bash
+make down
+```
+Derruba os containers, mas os volumes e data/ são mantidos.
+
+
 ## Dados
 
 ### Camada Bronze
-O ponto de partida deste projeto é o [The Berka Dataset](https://www.kaggle.com/datasets/marceloventura/the-berka-dataset). Este conjunto de dados reúne informações financeiras de um banco tcheco, com transações de 1993 a 1998.\
-Temos disponíveis oito tabelas. Na Bronze **todos os campos são gravados como string** (cópia 1:1 do `.csv`, sem tipagem nem tratamento de nulos): os tipos reais são aplicados na Silver, e o formato de origem aparece na descrição de cada campo.
+O ponto de partida deste projeto é o [The Berka Dataset](https://www.kaggle.com/datasets/marceloventura/the-berka-dataset). \
+Este conjunto de dados reúne em oito tabelas as informações financeiras de um banco tcheco, com transações de 1993 a 1998.\
+A camada Bronze é uma cópia 1:1 do `.csv` original, sem tipagem nem tratamento de nulos, **todos os campos são gravados como string**.
 
 #### `account`
 
@@ -148,10 +246,8 @@ Temos disponíveis oito tabelas. Na Bronze **todos os campos são gravados como 
 | `bank`       | string | Código do banco parceiro, composto por duas letras (aplicável apenas a transferências).                                                                                                                                                                                                 |
 | `account`    | string | Chave de identificação da conta parceira (aplicável apenas a transferências).                                                                                                                                                                                                           |
 
-#### Diagrama Entidade-Relacionamento (conjunto original)
-O diagrama abaixo descreve o schema original do Berka Dataset (8 tabelas),
-tal como chega na camada Raw/Bronze.
-
+#### Diagrama Entidade-Relacionamento 
+O diagrama abaixo descreve a relação entre as 8 tabelas da camada bronze.
 ```mermaid
 erDiagram
     DISTRICT ||--o{ ACCOUNT : "possui"
@@ -236,20 +332,18 @@ erDiagram
 ```
 
 ### Camada Silver
-
-O schema de origem tem 8 tabelas e uma hierarquia de 4 níveis (`district → account/client → disp → card/loan/order/trans`). \
-Para simplificar os relacionamentos e reduzir os joins necessários nas etapas seguintes, uniram-se os dados de `disp` e `card` na tabela `client`. \
-O mesmo processo foi realizado com os dados da tabela `loan` em `account`. \
+O principal objetivo da camada silver é realizar a limpeza e tipagem dos dados. \
+Contudo, a camada também simplifica os relacionamentos entre as tabelas e reduzir os joins necessários nas etapas seguintes. \
+Unindo os dados de `disp` e `card` na tabela `client` e os dados da tabela `loan` em `account`. \
 Já `district` permanece como tabela dimensão separada (só as colunas A1..A16 foram renomeadas), pois um join simples já resolve a relação sem
 introduzir ambiguidade.
 
 Para realizar essas alterações foram aplicadas as seguintes validações:
-- todo `client` tem exatamente 1 `disp` (nenhum cliente possui mais de uma conta, nenhuma conta com mais de 1 titular ou mais de 1 dependente, e
-  nunca o mesmo `client_id` como titular e dependente da mesma conta); \
-- todo `card` pertence a um `disp` do tipo `OWNER` (titular) único (nenhum dependente tem cartão, nenhum titular tem mais de 1 cartão); \
+- todo `client` tem exatamente 1 `disp`;
+- todo `card` pertence a um `disp` do tipo `OWNER` (titular) único;
 - toda `account` possui no máximo 1 `loan`.
 
-Como resultado, temos as seguintes tabelas:
+Como resultado, temos:
 
 #### `district`
 
@@ -348,7 +442,7 @@ Tratamentos aplicados a todas as tabelas (`src/the_bank_project/silver/`):
   titular. Se qualquer regra falhar, nada é gravado.
 
 #### Diagrama Entidade-Relacionamento (conjunto reestruturado)
-
+O diagrama abaixo descreve a relação entre as 8 tabelas da camada silver.
 ```mermaid
 erDiagram
     DISTRICT ||--o{ ACCOUNT : "possui"
@@ -421,18 +515,20 @@ erDiagram
 ```
 ### Camada Gold
 
-A camada Gold consolida os dados tratados na Silver em estruturas orientadas ao consumo analítico e à geração de features para modelos de aprendizado supervisionado. \
+A camada Gold consolida os dados tratados na Silver em estruturas orientadas ao consumo analítico. \
+A Gold não define os modelos de ML, nem seus conjuntos de treinamento e teste. \
+Seu objetivo é disponibilizar dados confiáveis, reutilizáveis e temporalmente consistentes para que diferentes times possam construir suas próprias features, visões analíticas e modelos. 
+
 Os dados são organizados em duas tabelas com granularidades diferentes, ambas com **`account_id` como entidade**:
 - Visão cadastral da conta `gold_account`;
 - Visão temporal do comportamento financeiro `gold_account_monthly_movements`;
 
-**Por que a conta e não o cliente?** \
-O Berka tem 5.369 clientes para 4.500 contas. Os 869 dependentes compartilham a conta do titular e, portanto, a mesma série de transações e o mesmo target. \
+
+**Por que uma visão por conta e não o cliente?** \
+O Berka tem 5.369 clientes para 4.500 contas. \
+869 dependentes compartilham a conta do titular e, portanto, possuem a mesma série de transações e o mesmo target. \
 Usá-los como entidade duplicaria observações idênticas e enviesaria as métricas dos modelos. \
-Os atributos do cliente que interessam (sexo e nascimento do titular, cartão) entram como atributos da conta. \
-A Gold não define os modelos de ML nem seus conjuntos de treinamento. \
-Seu objetivo é disponibilizar dados confiáveis, reutilizáveis e temporalmente consistentes para que diferentes times possam construir suas próprias features, visões analíticas e modelos. \
-O código está em `src/the_bank_project/gold/` (`make gold`) e as tabelas são gravadas em `data/gold/`.
+Dessa forma, os atributos do cliente que interessam ao modelo, como sexo e idade do titular, se possui cartão ou empréstimo entram como atributos da conta. 
 
 #### `gold_account`
 
@@ -549,9 +645,9 @@ Por isso, o saldo de abertura/fechamento do dia é resolvido pela cadeia `balanc
 - meses contíguos por conta e `reference_month` sempre no fim do mês;
 - consistência das janelas: `outflow_3m_sum` não é menor que a saída do mês e `previous_month_outflow` bate com o mês anterior.
 
-Os testes garantem ainda que alterar um mês futuro não muda nenhuma feature dos meses anteriores (anti-vazamento).
 
 #### Diagrama Entidade-Relacionamento
+O diagrama abaixo descreve a relação entre as 8 tabelas da camada gold.
 
 ```mermaid
 erDiagram
@@ -651,11 +747,11 @@ As etapas de treino e serving passam por `the_bank_project.features`, e nenhum o
 - **Offline store:** Dados de treinamento;
 - **Online store:** Dados recentes para inferência, via API;
 - **Views:** `account_static` (`gold_account`) e `account_monthly` (`gold_account_monthly_movements`);
-- **FeatureService `outflow_regression`:** Visão mensal e histórica utilizadas pelo modelo. \
+- **FeatureService `outflow_regression`:** Visão mensal e histórica utilizadas pelo modelo.
 
 
 ## Modelos Supervisionados
-### Modelo de regressão | Prevendo o gastos de uma conta no próximo mês
+### Modelo de regressão | Prevendo os gastos de uma conta no próximo mês
 
 O objetivo deste modelo é prever o valor total de saídas de uma conta no mês seguinte.
 Matematicamente:
@@ -690,30 +786,20 @@ A Gold tem 185.326 registros mensais (1.056.320 transações agregadas por conta
 O último mês de cada conta não tem mês seguinte e não gera observação de treino, o que deixa **180.826 observações** (meses 1993-01 a 1998-11), gravadas em `data/gold/labels_outflow.parquet`.
 
 **Modelos:**
+Foram testados diferentes modelos de regressão (Regressão linear, Random Forest, Gradient Boosting e XGBoost). \
+Além deles, duas regras ingênuas servem de baseline: a média de saídas dos 3 meses anteriores e a persistência (repetir o mês atual). \
 
-```text
-Regressão Linear
-        ↓
-Random Forest Regressor
-        ↓
-Gradient Boosting
-        ↓
-XGBoost
-```
+> Nota: Com exceção da regressão linear, os modelos treinam em `log1p(target)` e revertem com `expm1` na previsão.
 
 **Métricas observadas:**
 
 ```text
-MAE     (Erro médio absoluto, )
+MAE     (Erro médio absoluto)
 RMSE    (Raiz do erro quadrático médio)
 R²      (R Quadrado)
 ```
 
-O MAE indica diretamente o erro médio de previsão; \
-O RMSE é mais sensível erros elevados; \
-O R² estima quão bem o modelo explica a variação nos valores observados.
-
-#### Features
+#### Features Utilizadas
 
 **Visão mensal:**
 
@@ -756,7 +842,7 @@ balance_mom_change
 
 #### Divisão e seleção
 
-Devido ao caráter temporal, optou-se por uma a divisão cronológica dos dados, escolhendo os cortes para chegar perto de 70/20/10 das *linhas* (as linhas se concentram nos anos finais, então 70% das linhas não são 70% do tempo). \
+Devido ao caráter temporal, optou-se por uma divisão cronológica dos dados, escolhendo os cortes para chegar perto de 70/20/10 das *linhas* (as linhas se concentram nos anos finais, então 70% das linhas não são 70% do tempo). \
 Entre os conjuntos há **1 mês de folga** descartado: o label de T é o outflow de T+1, então sem folga o último mês de treino usaria como label um valor que já é feature do primeiro mês de validação.
 
 ```text
@@ -767,71 +853,96 @@ Validação  1997-12 .. 1998-06    31.420 linhas
 Teste      1998-08 .. 1998-11    17.874 linhas
 ```
 
-Para cada modelo, 8 configurações de hiperparâmetros sorteadas (além da padrão) são ajustadas **só no treino** e comparadas na validação. \
+Cada modelo testa 8 configurações de hiperparâmetros diferentes, ajustadas **durante o treino** e avaliadas **na validação**. \
+Caso o arquivo `configs/best_params.yaml` seja gerado na etapa de tuning, só a configuração otimizada é avaliada. \
 O vencedor de cada algoritmo é reajustado em treino + validação e medido **uma vez** no teste. \
-O modelo registrado é o de menor MAE de **validação**; \
-O teste nunca decide a seleção (há um teste automatizado que corrompe o alvo do teste e confere que o vencedor não muda).
+O modelo vencedor é aquele que possuir o menor valor MAE para o conjunto de **validação**.
 
 #### Resultados (execução de 2026-09-24)
 
-| Modelo               | MAE validação | MAE teste | RMSE teste | R² teste | Skill vs ingênuo (teste) |
-| -------------------- | ------------- | --------- | ---------- | -------- | ------------------------ |
-| Média dos 3 meses    | 9.918         | 8.183     | 15.871     | 0,35     | (referência)             |
-| Persistência         | 11.577        | 9.197     | 18.910     | 0,08     |                          |
-| Regressão linear     | 8.051         | 7.970     | 13.391     | 0,54     | 0,03                     |
-| Gradient Boosting    | 7.232         | 6.637     | 12.979     | 0,57     | 0,19                     |
-| XGBoost              | 7.112         | 6.557     | 12.896     | 0,57     | 0,20                     |
-| **Random Forest**    | **7.059**     | **6.478** | 12.990     | 0,57     | **0,21**                 |
+| Modelo               | MAE validação | MAE teste | RMSE teste | R² teste |
+| -------------------- | ------------- | --------- | ---------- | -------- |
+| Média dos 3 meses    | 9.918         | 8.183     | 15.871     | 0,35     |
+| Persistência         | 11.577        | 9.197     | 18.910     | 0,08     |
+| Regressão linear     | 8.051         | 7.970     | 13.391     | 0,54     |
+| Gradient Boosting    | 7.232         | 6.637     | 12.979     | 0,57     |
+| XGBoost              | 7.112         | 6.557     | 12.896     | 0,57     |
+| **Random Forest**    | **7.059**     | **6.478** | 12.990     | 0,57     |
 
-Como ler: os três modelos de árvores erram ~20% menos que o melhor ingênuo, e a linear só empata com ele no teste. **A diferença entre Random Forest, XGBoost e Gradient Boosting é pequena (menos de 2,5% no MAE)** e não foi testada estatisticamente; a escolha do Random Forest pela validação é uma vantagem de ~0,8% sobre o XGBoost, que não deve ser tratada como definitiva. O R² de 0,57 mostra que boa parte da variação mensal das saídas não é explicada pelas features atuais. O teste tem só 4 meses (1998-08 a 1998-11).
+Observe que os três modelos baseados em árvores erram ~20% menos que o melhor dummy, já a regressão linear só empata com ele no teste. \
+**A diferença entre Random Forest, XGBoost e Gradient Boosting é pequena (menos de 2,5% no MAE)** no conjunto de testes, o desempate e a escolha do Random Forest vem do conjunto de validação, com uma vantagem de ~0,8% sobre o XGBoost, que não pode ser entendida como definitiva. \
+O R² de 0,57 mostra que boa parte da variação mensal das saídas não está coberta pelas features atuais. 
 
-#### Tuning de hiperparâmetros (Fase 9a, 2026-09-26)
+#### Treinamento: iterações e tempo
 
-`make tune` busca hiperparâmetros com o **Optuna** (TPE) e validação cruzada temporal: 4 dobras de janela expansiva, por mês, **só dentro dos meses de treino** (a validação fica limpa para escolher o campeão e o teste, intocado), com a mesma folga de 1 mês do split. Cada modelo compara o melhor achado com a configuração padrão **nas mesmas dobras** e, se nada a bate, mantém a padrão. O resultado vai para `configs/best_params.yaml`, que o `make train` passa a usar no lugar do sorteio simples (sem o arquivo, ele volta ao sorteio). Limite de 30 tentativas e 20 min por modelo.
+Cada modelo foi ajustado duas vezes no `make train`, e os resultados na etapa de teste são enviados ao registry. 
+A tabela a seguir apresenta o tempo de treinamento e o numéro de árvores/iterações para cada modelo.
 
-| Modelo            | CV MAE padrão | CV MAE ajustado | Ganho | Tentativas | MAE validação (antes → depois) | MAE teste (antes → depois) |
-| ----------------- | ------------- | --------------- | ----- | ---------- | ------------------------------ | -------------------------- |
-| Random Forest     | 6.010         | 5.974           | 0,6%  | 13 (teto de tempo) | 7.059 → 7.041          | 6.478 → 6.492              |
-| Gradient Boosting | 6.147         | 6.124           | 0,4%  | 30         | 7.232 → 7.236                  | 6.637 → 6.637              |
-| XGBoost           | 6.080         | 6.019           | 1,0%  | 30         | 7.112 → 7.115                  | 6.557 → 6.521              |
+| Modelo            | Árvores/iterações                     | Tempo total               | Com tuning                                                  |
+| ----------------- | ------------------------------------- | ------------------------- | ------------------------------------------------------------|
+| Regressão linear  | não se aplica                         | 1,1 s                     | não se aplica                                               |
+| Random Forest     | 150 → 191 árvores                     | 195 s                     | 22 min (13 tentativas, limite de tempo)                     |
+| Gradient Boosting | 300 → 232 iterações                   | 4,9 s                     | 3,3 min (30 tentativas, limite de tentativas)               |
+| XGBoost           | 400 → 335 árvores                     | 18,2 s                    | 10 min (30 tentativas limite de tentativas)                 |
 
-- **O ganho é pequeno e não passa para o teste de forma consistente:** o CV melhora 0,4–1,0%, mas o MAE de teste varia entre −0,5% e +0,2%, dentro do ruído de um teste de 4 meses. O **campeão não mudou**: o challenger v4 (Random Forest ajustado, MAE de teste 6.492) perdeu no gate para o v1 (6.478).
-- **Leitura:** com estas features, o erro parece limitado pelos dados e não pelos hiperparâmetros. Os três algoritmos ficam a ~1% um do outro, e o tuning move cada um menos do que essa distância. Ganhos maiores tendem a vir de features (mais defasagens, sazonalidade) e não de mais busca.
-- **Bordas do espaço:** no XGBoost, `learning_rate` (0,020) e `max_depth` (9) ficaram nos limites da busca; ampliar o espaço poderia dar mais alguma coisa, mas o ganho esperado é da mesma ordem do ruído.
-- **Comparação justa:** os números de "antes" são da execução de 2026-09-24 (sorteio simples); os de "depois", do `train` com o `best_params.yaml`.
 
-#### Ciclo de vida no MLflow
+> Nota: Tempo total de cada run no MLflow.
 
-- **Experimento** `regressao_outflow`; **runs** `treino_<modelo>_<data>` (mais um run aninhado por configuração testada). Todos logam as mesmas métricas (`val_*` e `test_*`: MAE, RMSE e R²).
-- **Registry** `outflow_regression`, com **aliases** (não stages, depreciados no MLflow): o treino registra o vencedor pela validação como `challenger`; `make promote` o transforma em `champion` se ele tiver MAE de teste **estritamente menor** que o do campeão atual. Os dois modelos são reavaliados no mesmo teste no momento do gate. Sem campeão, o primeiro `challenger` assume. O resultado do gate fica em tags da versão (`gate`, `gate_test_mae`).
-- O modelo é carregável por `models:/outflow_regression@champion` (formato cloudpickle: o padrão skops exige listar cada tipo do modelo como confiável, e o registry é local).
-- **Tracking:** com `MLFLOW_TRACKING_URI` definido usa o servidor (o Docker Compose sobe um); sem ele, um SQLite local em `data/mlflow/`.
+#### Features mais importantes
 
----
+Valores obtidos a partir do campeão  Random Forest.
 
-## Inferência: API e interface
+| # | Feature                                        | Grupo                 | Importância |
+| - | ---------------------------------------------- | --------------------- | ----------- |
+| 1 | Saídas do mês (`outflow_amount`)               | Movimentação do mês   | 14,6%       |
+| 2 | Saques em dinheiro (`cash_withdrawal_amount`)  | Composição dos gastos | 13,6%       |
+| 3 | Saídas: média de 3 meses (`outflow_3m_avg`)    | Histórico e tendência | 12,8%       |
+| 4 | Saídas: soma de 3 meses (`outflow_3m_sum`)     | Histórico e tendência | 6,6%        |
+| 5 | Entradas: média de 3 meses (`inflow_3m_avg`)   | Histórico e tendência | 6,4%        |
+| 6 | Maior transação (`max_transaction_amount`)     | Movimentação do mês   | 5,2%        |
+| 7 | Saídas: média de 6 meses (`outflow_6m_avg`)    | Histórico e tendência | 4,8%        |
+| 8 | Nº de transações (`transaction_count`)         | Movimentação do mês   | 4,5%        |
+| 9 | Maior saldo (`max_balance`)                    | Saldo                 | 3,6%        |
+| 10| Entradas do mês (`inflow_amount`)              | Movimentação do mês   | 3,3%        |
 
-A API (FastAPI) prevê as **saídas totais de uma conta no mês seguinte**, com o modelo `champion` do MLflow e as features do Feast. Ela sobe com o restante da infraestrutura (`make up`, http://localhost:8000) ou localmente (`make serve`, com `MLFLOW_TRACKING_URI` no `.env`). \
-A mesma aplicação serve a **interface web** em `/`, feita para demonstrar o valor do modelo.
+Por grupo, temos: 
+- **Histórico e tendência 40,4%**
+- **Movimentação do mês 32,9%** 
+- **Composição dos gastos 14,6%**
+- **Saldo 12,1%**
+ 
+Podemos afirmar que `outflow_amount`, `cash_withdrawal_amount` e `outflow_3m_avg` são as melhores informações para prever os gastos futuros! \
+As três primeiras features sozinhas somam 41% de importância, e os saques em dinheiro são o único componente de gasto com peso relevante.
 
-### Interface
 
-- **Navegação:** cabeçalho fixo com âncoras (Visão geral, Modelo, Laboratório, Desempenho); o item da seção visível fica destacado e as seções que dependem de dados (Modelo, Desempenho) só aparecem quando eles chegam.
-- **Herói:** o erro médio do modelo no teste contra os demais modelos e contra a regra simples "repetir a média de saídas dos 3 meses".
-- **Laboratório:** o usuário escolhe o mês de referência e até 10 contas (busca pelo número ou "Sortear 5 contas"). Para cada conta, vê o **valor previsto ao lado do valor real**, o erro em Kč e em %, e o erro que a média de 3 meses teria dado. Ao clicar numa conta, aparecem o histórico de 12 meses com o previsto e o real no mês seguinte e **todas as informações que o modelo usou** (29 features, com nomes legíveis e as 5 de maior peso em destaque).
-- **Modelo (Fase 9b):** o cartão do campeão (algoritmo, versão, data do treino, janelas de treino/validação/teste e hiperparâmetros do run, com a origem: ajustados pelo `make tune` ou sorteio simples), a importância das 10 features mais pesadas e por grupo (com tabela equivalente) e a **saúde dos dados**: último relatório de drift (features com drift contra o limite, as que mais mudaram, janelas comparadas) e a data do último re-treino disparado por ele.
-- **Desempenho geral:** o modelo é recalculado no conjunto de teste inteiro (a cada troca de campeão) e comparado com o baseline: erro médio, previsões a até 20% do real, proporção de contas-mês em que erra menos e um gráfico de dispersão previsto × real. O erro médio recalculado pela API coincide com o do MLflow. Também mostra o **erro por faixa de gasto** (valor real do mês seguinte: até 5 mil, 5–10, 10–20, 20–50 e acima de 50 mil), que evidencia onde o erro em Kč se concentra.
+#### Exemplo com dados reais
 
-Decisões para a interface não enganar quem a usa:
-- **O mês de referência mostra a que conjunto pertence:** os meses de teste (ago–nov/1998) nunca foram vistos pelo modelo; meses de treino ou validação vêm com o aviso de que o resultado tende a ser otimista. O ponto de partida é o mês de teste mais recente.
-- **Sem valor real no "mais recente":** a opção `dez/1998` prevê `jan/1999`, um mês que o dataset não tem, então só há previsão.
-- **Poucas contas não provam nada:** o modelo erra menos que a média de 3 meses em ~57% das contas-mês, não em todas. Numa amostra de 5 contas o baseline pode ganhar, e a interface diz isso e aponta para o teste inteiro.
+Duas contas reais, validadas pelo `POST /predict`, com `reference_month` = `1998-10-31`.
+O modelo recebe as 29 features de outubro e prevê as saídas de novembro de 1998:
+
+```bash
+curl -X POST localhost:8000/predict -H 'content-type: application/json' \
+  -d '{"account_ids": ["1", "2"], "reference_month": "1998-10-31", "include_features": true}'
+```
+
+| Conta | Saídas em out/1998 | Média de 3 meses (baseline) | **Previsto (nov/1998)** | Real (nov/1998) | Erro do modelo | Erro do baseline |
+| ----- | ------------------ | --------------------------- | ----------------------- | --------------- | -------------- | ---------------- |
+| 1     | 2.467 Kč           | 4.723 Kč                    | **3.413 Kč**            | 2.977 Kč        | +436 Kč (15%)  | +1.747 Kč (59%)  |
+| 2     | 18.381 Kč          | 21.847 Kč                   | **22.023 Kč**           | 29.891 Kč       | −7.867 Kč (26%)| −8.044 Kč (27%)  |
+
+Na conta 1 com saídas de ~2,5 mil Kč, o modelo erra apenas 15%, já a média de 3 meses, superestima os valores de novembro em quase 60%. \
+Enquanto a conta 2, com saídas de ~18 mil Kč, o modelo não antecipa um pico em novembro e empata com o baseline. \
+
+
+## Interface Web para inferência
+
+A interface web permite que o usuário possa testar o modelo em tempo real, gerando o **total de gastos de uma conta no próximo mês**, utilizando o modelo registrado `champion` do MLflow e as features do Feast. 
 
 ### Endpoints
 
 | Endpoint                                | Função                                                                                   |
 | --------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `POST /predict`                         | Previsão em lote (até 100 contas). Contrato público, consumido pelo chat da Etapa 3.     |
+| `POST /predict`                         | Previsão em lote (até 100 contas). Contrato público, previsto para o chat da Etapa 3 (não iniciada). |
 | `GET /health`                           | Campeão carregado e tamanho do catálogo. Responde 503 se não houver `champion`.          |
 | `GET /metrics`                          | Métricas no formato Prometheus.                                                          |
 | `GET /api/model`                        | Campeão, métricas no teste, comparativo com os baselines, features (nome, grupo, peso), hiperparâmetros, origem deles e data do treino. |
@@ -874,7 +985,8 @@ curl -X POST localhost:8000/predict -H 'content-type: application/json' \
 
 ## Monitoramento
 
-Com `make up`, o **Prometheus** (http://localhost:9090) faz scrape do `/metrics` da API a cada 15 s e o **Grafana** (http://localhost:3000, visualização sem login; `admin`/`admin` para editar) já abre com o dashboard "Monitoramento: API e drift" provisionado a partir de `monitoring/`, sem configuração manual.
+O **Prometheus** (http://localhost:9090) coleta as métricas da API a cada 15 s. \
+Enquanto o **Grafana** (http://localhost:3000) apresenta os resultados no dashboard "Monitoramento: API e drift".
 
 | Bloco do dashboard | O que mostra                                                                                          |
 | ------------------ | ----------------------------------------------------------------------------------------------------- |
@@ -883,13 +995,19 @@ Com `make up`, o **Prometheus** (http://localhost:9090) faz scrape do `/metrics`
 | Previsões          | Previsões e chamadas por modo, fração de contas sem features e distribuição dos valores previstos.    |
 | Drift de dados     | Veredito do dataset, fração e contagem de features com drift, idade do relatório e top 10 scores.     |
 
-Alertas (`monitoring/alerts.yml`, visíveis em http://localhost:9090/alerts): API fora do ar, nenhum campeão carregado, 5xx acima de 5%, p95 do `/predict` acima de 1 s mais de 20% das contas sem features, drift detectado na última execução e relatório de drift com mais de 8 dias. Não há Alertmanager: a infra é local e não haveria para onde notificar.
+Alertas (`monitoring/alerts.yml`, visíveis em http://localhost:9090/alerts): 
+- API fora do ar; 
+- Nenhum campeão disponível; 
+- Taxa de erros 5xx acima de 5%;
+- p95 do `/predict` acima de 1 s;
+- Drift detectado na última execução e relatório de drift. 
 
-Os testes (`tests/monitoring/`) garantem que todo nome de métrica usado nos alertas e no dashboard existe em `ServingMetrics`, para que renomear uma métrica na API não quebre o painel em silêncio.
+> Nota: A infra é local, portando não há Alertmanager.
+
 
 ### Drift de dados
 
-`make drift` compara, com o **Evidently**, as features que o modelo viu com as dos meses mais recentes e grava em `data/monitoring/` um relatório HTML (`drift_report.html`) e um resumo (`drift_summary.json`). As features vêm do Feast, pelo mesmo caminho do treino.
+Utilizando o **Evidently**, valida o drift de dados e grava em `data/monitoring/` um relatório HTML (`drift_report.html`) e um resumo (`drift_summary.json`). 
 
 | Parâmetro (`monitoring` em `global_config.yaml`) | Valor | Significado                                                                                  |
 | ------------------------------------------------ | ----- | -------------------------------------------------------------------------------------------- |
@@ -923,7 +1041,7 @@ Na DAG `monitoring`, depois do `drift_report`, a task `decide_retrain` aplica `s
 
 ## Entrega (CI/CD)
 
-- **CI** (`.github/workflows/ci.yml`): lint, formatação, mypy, testes com cobertura e `dag-check` a cada push em `master` e em PRs.
+- **CI** (`.github/workflows/ci.yml`): lint, mypy, testes com cobertura e `dag-check` a cada push em `master` e em PRs.
 - **CD** (`.github/workflows/cd.yml`): quando o CI passa em `master` (`workflow_run`, ou disparo manual), constrói as imagens `airflow`, `mlflow` e `serving`, faz um smoke test de cada uma (`scripts/smoke_image.sh`) e só então as publica no **GHCR** (`ghcr.io/<dono>/the-bank-project-<imagem>`, tags `sha-<curto>` e `latest`). Sem cloud, "deploy" é isso mais o compose local.
 - **Rodar com as imagens publicadas:** `docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d` (`GHCR_OWNER` e `IMAGE_TAG` ajustam dono e tag). `make up` continua construindo localmente. Os pacotes nascem privados no GitHub; é preciso `docker login ghcr.io` ou torná-los públicos.
 - **Verificação local:** `make cd-check` valida o override e roda o smoke nas imagens locais; `tests/cd/` garante que a matrix, os `Dockerfile`, o compose e o override falam dos mesmos nomes.

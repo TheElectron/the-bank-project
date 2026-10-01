@@ -18,7 +18,7 @@ Legenda: ⬜ não iniciada · 🚧 em andamento · ✅ concluída
 | 6    | Inferência via API (FastAPI + Docker)                           | 6                   | ✅     |
 | 7    | Monitoramento e re-treino por drift (7a ✅, 7b ✅, 7c ✅)         | 7                   | ✅     |
 | 8    | CD e fechamento                                                 | CI/CD               | ✅     |
-| 9    | Ajustes e melhorias (9a tuning ✅, 9b interface ✅)              | 5, 6                | ✅     |
+| 9    | Ajustes e melhorias (9a tuning ✅, 9b interface ✅, 9c docstrings ✅) | 5, 6                | ✅     |
 
 ## Princípios
 
@@ -335,3 +335,17 @@ informações da interface (a 9b não depende da 9a).
   parâmetros do modelo, comparativo). A interface em si (JS) não tem teste automatizado além do carregamento dos assets.
 - **Para ver a interface nova no Docker:** reconstruir a imagem da API e recriar o serviço (o compose ganhou o volume
   `data/monitoring`); o CD do GHCR também as publica no próximo push.
+
+### 9c — Padronização das docstrings e do lint (✅ implementada, 2026-09-30)
+
+- **Decisão do usuário:** adotar o novo estilo de docstring (aspas em linhas próprias, texto indentado, módulos com
+  "Título / Este módulo contém…") em todo o pacote `src/the_bank_project/`. A refatoração começou à mão em
+  `ingestion`, `silver`, `gold` e `features`; o restante (`config`, `io`, `logging_config`, `training`, `serving`,
+  `monitoring`) foi convertido por script (`ast`), sem alterar código, comentários nem o conteúdo das docstrings
+  (`Args`/`Returns`/`Raises` e o "porquê" foram mantidos).
+- **`ruff format` saiu do fluxo:** ele remove a indentação do novo estilo, então foi retirado do `make lint`, do
+  `ci.yml` e do hook do `pre-commit`; `make format` passou a rodar só `ruff check --fix`. O E501 (120 colunas) segue
+  valendo: 7 linhas longas em código foram quebradas e 12 imports reordenados (I001).
+- **Testes ajustados às mensagens novas:** `test_check_gold_detects_violations` (`discrepância entre o total de
+  contas`) e `test_fails_if_client_has_no_disp` (`Falha no merge (1:1) entre clientes e disp`).
+- **Verificação:** `make check` verde (ruff, mypy em 62 arquivos, 262 testes, cobertura 97%).

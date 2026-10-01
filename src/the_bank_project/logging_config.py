@@ -1,10 +1,14 @@
-"""Configuração de logging a partir do arquivo `configs/logger.yaml`."""
+"""
+    Logging
+    Este módulo contém a configuração de logging a partir do arquivo `configs/logger.yaml`.
+"""
 
 
-import yaml
 import logging
 import logging.config
 from pathlib import Path
+
+import yaml
 
 from the_bank_project.config import CONFIGS_DIR
 

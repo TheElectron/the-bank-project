@@ -24,7 +24,10 @@ def build_gold_account(account: pd.DataFrame, client: pd.DataFrame, district: pd
         Método responsável por construir a tabela `gold_account`.
     """
     owner = client.loc[client["relationship_type"] == "TITULAR"]
-    owner = owner.rename(columns={"client_id": "owner_client_id", "gender": "owner_gender", "birth_date": "owner_birth_date", "district_id": "owner_district_id"})  # fmt: skip
+    owner = owner.rename(columns={
+        "client_id": "owner_client_id", "gender": "owner_gender",
+        "birth_date": "owner_birth_date", "district_id": "owner_district_id",
+    })  # fmt: skip
     dependents = client.loc[client["relationship_type"] == "DEPENDENTE"].groupby("account_id").size()
     dist = district.rename(columns=DISTRICT_COLUMNS)[["district_id", *DISTRICT_COLUMNS.values()]]
 

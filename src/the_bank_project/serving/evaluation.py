@@ -1,7 +1,9 @@
-"""Avaliação do campeão no conjunto de teste inteiro, com o modelo que está carregado.
+"""
+    Avaliação do campeão
+    Este módulo contém a avaliação do campeão no conjunto de teste inteiro, com o modelo que está carregado.
 
-Complementa as contas escolhidas na interface: duas ou três contas não provam nada (o ganho do modelo é
-médio), então mostramos o desempenho em todas as contas-mês do teste, contra o baseline ingênuo.
+    Complementa as contas escolhidas na interface: duas ou três contas não provam nada (o ganho do modelo é
+    médio), então mostramos o desempenho em todas as contas-mês do teste, contra o baseline ingênuo.
 """
 
 import logging
@@ -36,7 +38,9 @@ def _stats(y: np.ndarray, pred: np.ndarray) -> ErrorStats:
 
 
 def error_by_band(y: np.ndarray, pred: np.ndarray, base: np.ndarray) -> list[BandError]:
-    """MAE do modelo e do baseline por faixa do valor real; faixas sem nenhuma conta-mês ficam de fora."""
+    """
+        MAE do modelo e do baseline por faixa do valor real; faixas sem nenhuma conta-mês ficam de fora.
+    """
     rows = []
     for label, lower, upper in BANDS:
         mask = (y >= lower) & (y < upper if upper is not None else True)
@@ -54,7 +58,9 @@ def error_by_band(y: np.ndarray, pred: np.ndarray, base: np.ndarray) -> list[Ban
 def build_report(
     reader: FeatureReader, catalog: AccountCatalog, bundle: ModelBundle, service_refs: list[str], seed: int = 0
 ) -> EvaluationReport:
-    """Prevê todas as contas-mês do teste e compara com o valor real e com a média dos 3 meses."""
+    """
+        Prevê todas as contas-mês do teste e compara com o valor real e com a média dos 3 meses.
+    """
     pairs = catalog.pairs("teste")
     entities = pairs[["account_id", "event_timestamp"]].assign(
         event_timestamp=pairs["event_timestamp"].dt.tz_localize("UTC")
@@ -99,7 +105,9 @@ def build_report(
 
 
 class EvaluationCache:
-    """Calcula o relatório em segundo plano, uma vez por versão do campeão."""
+    """
+        Calcula o relatório em segundo plano, uma vez por versão do campeão.
+    """
 
     def __init__(self, compute: Callable[[ModelBundle], EvaluationReport]) -> None:
         self._compute = compute
@@ -111,7 +119,9 @@ class EvaluationCache:
         return self._done.get(version)
 
     def start(self, bundle: ModelBundle) -> None:
-        """Dispara o cálculo para a versão do `bundle`, se ainda não houver um pronto ou em curso."""
+        """
+            Dispara o cálculo para a versão do `bundle`, se ainda não houver um pronto ou em curso.
+        """
         version = bundle.info.version
         with self._lock:
             if version in self._done or version in self._running:

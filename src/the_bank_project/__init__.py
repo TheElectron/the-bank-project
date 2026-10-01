@@ -1,1 +1,3 @@
-"""MLOps Pipeline | The Bank Project."""
+"""
+    MLOps Pipeline | The Bank Project.
+"""

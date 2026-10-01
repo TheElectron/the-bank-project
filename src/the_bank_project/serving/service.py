@@ -1,4 +1,7 @@
-"""Lógica de previsão: features (Feast) → modelo → resposta. Sem HTTP, testável isolada."""
+"""
+    Previsão
+    Este módulo contém a lógica de previsão: features (Feast) → modelo → resposta. Sem HTTP, testável isolada.
+"""
 
 import numpy as np
 import pandas as pd
@@ -15,11 +18,15 @@ BASELINE = "outflow_3m_avg"  # o melhor baseline ingênuo do treino: média das 
 
 
 class UnknownMonth(LookupError):
-    """O mês pedido não tem features com valor real conhecido."""
+    """
+        O mês pedido não tem features com valor real conhecido.
+    """
 
 
 class PredictionService:
-    """Busca as features no Feast, alinha às colunas do modelo e prediz."""
+    """
+        Busca as features no Feast, alinha às colunas do modelo e prediz.
+    """
 
     def __init__(self, reader: FeatureReader, catalog: AccountCatalog, metrics: ServingMetrics) -> None:
         self._reader, self._catalog, self._metrics = reader, catalog, metrics
@@ -30,7 +37,9 @@ class PredictionService:
         return self._service_refs
 
     def _features(self, ids: list[str], month: pd.Timestamp | None) -> pd.DataFrame:
-        """Uma linha por conta encontrada, com as features do FeatureService e `year`/`month` de T."""
+        """
+            Uma linha por conta encontrada, com as features do FeatureService e `year`/`month` de T.
+        """
         refs = [*self._service_refs, *CALENDAR_REFS]
         if month is None:
             df = self._reader.online(ids, refs)
@@ -45,7 +54,9 @@ class PredictionService:
     def predict(
         self, bundle: ModelBundle, account_ids: list[str], reference_month: pd.Timestamp | None, include_features: bool
     ) -> PredictResponse:
-        """Previsão de saídas de T+1 para cada conta. `reference_month` nulo usa o mês mais recente do online store."""
+        """
+            Previsão de saídas de T+1 para cada conta. `reference_month` nulo usa o mês mais recente do online store.
+        """
         month = None if reference_month is None else month_end(reference_month)
         self._metrics.predict_requests.labels(mode="online" if month is None else "historico").inc()
         feats = self._features(account_ids, month)
@@ -92,7 +103,9 @@ class PredictionService:
         )
 
     def history(self, account_id: str, reference_month: pd.Timestamp, months: int) -> History:
-        """Entradas, saídas e saldo dos `months` meses até T (inclusive) e o valor real de T+1, se conhecido."""
+        """
+            Entradas, saídas e saldo dos `months` meses até T (inclusive) e o valor real de T+1, se conhecido.
+        """
         month = month_end(reference_month)
         stamps = [month - pd.offsets.MonthEnd(k) for k in range(months)]
         entities = pd.DataFrame({"account_id": account_id, "event_timestamp": [s.tz_localize("UTC") for s in stamps]})

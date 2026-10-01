@@ -1,6 +1,8 @@
-"""Hiperparâmetros ajustados (`configs/best_params.yaml`): schema, leitura e escrita.
+"""
+    Hiperparâmetros ajustados
+    Este módulo contém o schema, a leitura e a escrita de `configs/best_params.yaml`.
 
-Fica separado do `tuning.py` para o treino em produção (Airflow) ler o arquivo sem depender do Optuna.
+    Fica separado do `tuning.py` para o treino em produção (Airflow) ler o arquivo sem depender do Optuna.
 """
 
 import logging
@@ -18,7 +20,9 @@ logger = logging.getLogger(__name__)
 
 
 class TunedModel(BaseModel):
-    """Melhor configuração de um modelo e o quanto ela ganhou da padrão, medidos nas mesmas dobras."""
+    """
+        Melhor configuração de um modelo e o quanto ela ganhou da padrão, medidos nas mesmas dobras.
+    """
 
     params: Params
     cv_mae: float
@@ -28,7 +32,9 @@ class TunedModel(BaseModel):
 
 
 class BestParams(BaseModel):
-    """Resultado do `make tune`; o `train` usa `models[algoritmo].params` no lugar do sorteio simples."""
+    """
+        Resultado do `make tune`; o `train` usa `models[algoritmo].params` no lugar do sorteio simples.
+    """
 
     generated_at: datetime
     seed: int
@@ -39,21 +45,26 @@ class BestParams(BaseModel):
 
 
 def best_params_path(cfg: GlobalConfig) -> Path:
-    """`tuning.best_params_file`: relativo a `configs/`, ou absoluto."""
+    """
+        `tuning.best_params_file`: relativo a `configs/`, ou absoluto.
+    """
     return CONFIGS_DIR / cfg.tuning.best_params_file
 
 
 def save_best_params(best: BestParams, path: Path) -> None:
-    """Grava o YAML (legível e versionável)."""
+    """
+        Grava o YAML (legível e versionável).
+    """
     header = "# Gerado por `make tune` (Fase 9a). Lido pelo `train`; não editar à mão.\n"
     path.write_text(header + yaml.safe_dump(best.model_dump(mode="json"), sort_keys=False), encoding="utf-8")
 
 
 def load_best_params(cfg: GlobalConfig) -> BestParams | None:
-    """Lê os parâmetros ajustados; None se ainda não houve tuning ou se não valem para a config atual.
+    """
+        Lê os parâmetros ajustados; None se ainda não houve tuning ou se não valem para a config atual.
 
-    Raises:
-        pydantic.ValidationError: se o arquivo existir mas estiver fora do schema.
+        Raises:
+            pydantic.ValidationError: se o arquivo existir mas estiver fora do schema.
     """
     path = best_params_path(cfg)
     if not path.exists():

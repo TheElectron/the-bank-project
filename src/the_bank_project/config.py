@@ -1,8 +1,13 @@
-"""Configuração do projeto geral do projeto."""
+"""
+    Configuração
+    Este módulo contém os schemas (Pydantic) e as funções que carregam a configuração do projeto:
+    YAML em `configs/` e variáveis de ambiente (`.env`).
+"""
 
+
+from pathlib import Path
 
 import yaml
-from pathlib import Path
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -12,7 +17,9 @@ DEFAULT_CONFIG_PATH = CONFIGS_DIR / "global_config.yaml"
 
 
 class PathsConfig(BaseModel):
-    """Diretórios do data lake Medallion."""
+    """
+        Diretórios do data lake Medallion.
+    """
 
     data_dir: Path = Path("data")
 
@@ -46,13 +53,17 @@ class PathsConfig(BaseModel):
 
 
 class KaggleConfig(BaseModel):
-    """Origem dos dados brutos."""
+    """
+        Origem dos dados brutos.
+    """
 
     dataset: str
 
 
 class FeastConfig(BaseModel):
-    """Repositório da feature store (Feast)."""
+    """
+        Repositório da feature store (Feast).
+    """
 
     repo_path: Path = Path("feature_repo")
 
@@ -62,7 +73,9 @@ class FeastConfig(BaseModel):
 
 
 class SplitConfig(BaseModel):
-    """Divisão cronológica do dataset de treino, feita por mês (não por linha)."""
+    """
+        Divisão cronológica do dataset de treino, feita por mês (não por linha).
+    """
 
     train_frac: float = 0.70
     val_frac: float = 0.20
@@ -70,7 +83,9 @@ class SplitConfig(BaseModel):
 
 
 class TrainingConfig(BaseModel):
-    """Treino, validação e registry do modelo de regressão de gastos."""
+    """
+        Treino, validação e registry do modelo de regressão de gastos.
+    """
 
     experiment: str = "regressao_outflow"
     registered_model: str = "outflow_regression"
@@ -83,7 +98,9 @@ class TrainingConfig(BaseModel):
 
 
 class TuningConfig(BaseModel):
-    """Tuning de hiperparâmetros (Optuna + validação cruzada temporal dentro dos meses de treino)."""
+    """
+        Tuning de hiperparâmetros (Optuna + validação cruzada temporal dentro dos meses de treino).
+    """
 
     n_trials: int = 30  # tentativas por modelo (o `timeout_minutes` pode encerrar antes)
     cv_folds: int = 4  # dobras de janela expansiva; a validação e o teste do split não entram
@@ -92,7 +109,9 @@ class TuningConfig(BaseModel):
 
 
 class ServingConfig(BaseModel):
-    """API de inferência (FastAPI)."""
+    """
+        API de inferência (FastAPI).
+    """
 
     host: str = "0.0.0.0"
     port: int = 8000
@@ -102,7 +121,9 @@ class ServingConfig(BaseModel):
 
 
 class MonitoringConfig(BaseModel):
-    """Drift de dados (Evidently): referência = meses de treino/validação, atual = últimos meses da Gold."""
+    """
+        Drift de dados (Evidently): referência = meses de treino/validação, atual = últimos meses da Gold.
+    """
 
     current_months: int = 3  # tamanho da janela "atual" (replay temporal: o dataset é histórico)
     feature_threshold: float = (
@@ -114,7 +135,9 @@ class MonitoringConfig(BaseModel):
 
 
 class GlobalConfig(BaseModel):
-    """Configuração global, espelho de `configs/global_config.yaml`."""
+    """
+        Configuração global, espelho de `configs/global_config.yaml`.
+    """
 
     paths: PathsConfig = PathsConfig()
     kaggle: KaggleConfig
@@ -126,7 +149,9 @@ class GlobalConfig(BaseModel):
 
 
 class Settings(BaseSettings):
-    """Variáveis de ambiente / `.env` (segredos e overrides locais)."""
+    """
+        Variáveis de ambiente / `.env` (segredos e overrides locais).
+    """
 
     model_config = SettingsConfigDict(env_file=PROJECT_ROOT / ".env", extra="ignore")
 
@@ -139,15 +164,16 @@ class Settings(BaseSettings):
 
 
 def load_config(path: Path | None = None) -> GlobalConfig:
-    """Carrega e valida o YAML de configuração.
+    """
+        Carrega e valida o YAML de configuração.
 
-    Args:
-        path: caminho do YAML. Se omitido, usa `CONFIG_PATH` do ambiente ou
-            `configs/global_config.yaml`.
+        Args:
+            path: caminho do YAML. Se omitido, usa `CONFIG_PATH` do ambiente ou
+                `configs/global_config.yaml`.
 
-    Raises:
-        FileNotFoundError: se o arquivo não existir.
-        pydantic.ValidationError: se o conteúdo não bater com o schema.
+        Raises:
+            FileNotFoundError: se o arquivo não existir.
+            pydantic.ValidationError: se o conteúdo não bater com o schema.
     """
     path = path or Settings().config_path
     with path.open(encoding="utf-8") as f:

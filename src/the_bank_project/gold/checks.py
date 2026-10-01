@@ -1,5 +1,6 @@
 """
-    Validações de qualidade para a Gold.
+    Validações de qualidade da Gold
+    Este módulo contém os checks de PKs, nulos, integridade e consistência das janelas das tabelas da Gold.
 """
 
 import numpy as np
@@ -15,7 +16,9 @@ TOLERANCE = 0.01
 
 
 class GoldQualityError(ValueError):
-    """Uma regra de qualidade foi violada."""
+    """
+        Uma regra de qualidade foi violada.
+    """
 
 
 def _null_columns(df: pd.DataFrame, columns: list[str]) -> list[str]:

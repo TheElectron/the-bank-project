@@ -1,4 +1,8 @@
-"""CLI do serving: `python -m the_bank_project.serving` sobe a API com uvicorn."""
+"""
+    Serving [CLI]
+    Este módulo contém a CLI que sobe a API com uvicorn.
+    `python -m the_bank_project.serving`
+"""
 
 import argparse
 import sys
@@ -11,7 +15,9 @@ from the_bank_project.logging_config import configure_logging
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Sobe o servidor (host e porta da config, sobrescritos por --host/--port)."""
+    """
+        Sobe o servidor (host e porta da config, sobrescritos por --host/--port).
+    """
     cfg = load_config()
     parser = argparse.ArgumentParser(prog="the_bank_project.serving", description="API de inferência.")
     parser.add_argument("--host", default=cfg.serving.host)

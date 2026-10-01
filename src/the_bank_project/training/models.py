@@ -1,4 +1,7 @@
-"""Modelos candidatos e seus espaços de busca. Todos entram como pipelines do scikit-learn."""
+"""
+    Modelos candidatos
+    Este módulo contém os modelos candidatos e seus espaços de busca. Todos entram como pipelines do scikit-learn.
+"""
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -21,7 +24,9 @@ SpaceSpec = tuple[Any, ...]
 
 @dataclass(frozen=True)
 class Candidate:
-    """Um modelo candidato: como construir o estimador e o que variar na busca."""
+    """
+        Um modelo candidato: como construir o estimador e o que variar na busca.
+    """
 
     name: str
     build: Callable[[Params, int], Any]
@@ -118,7 +123,9 @@ CANDIDATES = (
 
 
 def make_estimator(candidate: Candidate, params: Params, seed: int, log_target: bool) -> Any:
-    """Constrói o estimador; com `log_target` (e se o modelo suporta), treina em `log1p(y)` e reverte na predição."""
+    """
+        Constrói o estimador; com `log_target` (e se o modelo suporta), treina em `log1p(y)` e reverte na predição.
+    """
     model = candidate.build(params, seed)
     if not (log_target and candidate.supports_log_target):
         return model
@@ -126,7 +133,9 @@ def make_estimator(candidate: Candidate, params: Params, seed: int, log_target: 
 
 
 def trial_params(candidate: Candidate, n_trials: int, seed: int) -> list[Params]:
-    """Configuração padrão + `n_trials` sorteios do espaço de busca (sem repetir a padrão)."""
+    """
+        Configuração padrão + `n_trials` sorteios do espaço de busca (sem repetir a padrão).
+    """
     trials = [candidate.defaults]
     if candidate.space and n_trials > 0:
         for sample in ParameterSampler(candidate.space, n_iter=n_trials, random_state=seed):

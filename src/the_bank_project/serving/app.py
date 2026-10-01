@@ -1,4 +1,8 @@
-"""Aplicação FastAPI: ciclo de vida, métricas HTTP, tratamento de erros e a interface web em `/`."""
+"""
+    Aplicação FastAPI
+    Este módulo contém a montagem da aplicação: ciclo de vida, métricas HTTP, tratamento de erros
+    e a interface web em `/`.
+"""
 
 import asyncio
 import time
@@ -21,7 +25,9 @@ UNMEASURED_PATHS = {"/metrics", "/static"}
 
 
 def create_app(cfg: GlobalConfig | None = None, state: AppState | None = None) -> FastAPI:
-    """Fábrica da aplicação. `state` injetado dispensa MLflow e Feast (testes)."""
+    """
+        Fábrica da aplicação. `state` injetado dispensa MLflow e Feast (testes).
+    """
     cfg = cfg or (state.cfg if state else load_config())
 
     @asynccontextmanager
@@ -43,7 +49,9 @@ def create_app(cfg: GlobalConfig | None = None, state: AppState | None = None) -
 
     @app.middleware("http")
     async def measure(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
-        """Conta e cronometra as requisições, rotulando pelo *template* da rota (poucos rótulos distintos)."""
+        """
+            Conta e cronometra as requisições, rotulando pelo *template* da rota (poucos rótulos distintos).
+        """
         started = time.perf_counter()
         response = await call_next(request)
         path = getattr(request.scope.get("route"), "path", "não-encontrada")

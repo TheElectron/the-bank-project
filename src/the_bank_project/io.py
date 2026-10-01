@@ -1,8 +1,12 @@
-"""I/O compartilhado entre as camadas do data lake."""
+"""
+    I/O compartilhado
+    Este módulo contém funções de leitura e escrita compartilhadas entre as camadas do data lake.
+"""
 
+
+from pathlib import Path
 
 import pandas as pd
-from pathlib import Path
 
 
 def write_parquet_atomic(df: pd.DataFrame, target: Path) -> Path:

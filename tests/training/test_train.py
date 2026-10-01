@@ -59,6 +59,15 @@ def test_training_logs_one_run_per_model_with_the_same_metrics(trained: tuple[Gl
     assert {r.name for r in result.candidates} == {c.name for c in SMALL}
 
 
+def test_training_logs_fit_seconds_for_candidates_and_trials(trained: tuple[GlobalConfig, TrainingResult]):
+    cfg, _ = trained
+    configure_mlflow(cfg)
+    runs = mlflow.search_runs(experiment_names=[cfg.training.experiment])
+    fitted = runs[runs["tags.mlflow.parentRunId"].notna() | (runs["tags.model_kind"] == "candidate")]
+    assert len(fitted) >= 2 * len(SMALL)  # um run final e ao menos um trial por candidato
+    assert (fitted["metrics.fit_seconds"] > 0).all()
+
+
 def test_winner_is_chosen_by_validation_and_registered_as_challenger(
     trained: tuple[GlobalConfig, TrainingResult], dataset: Dataset
 ):

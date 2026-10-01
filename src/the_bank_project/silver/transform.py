@@ -5,8 +5,9 @@
 """
 
 import logging
-import pandas as pd
 from pathlib import Path
+
+import pandas as pd
 
 from the_bank_project.io import write_parquet_atomic
 from the_bank_project.silver.checks import check_silver
@@ -135,7 +136,10 @@ def build_account(account: pd.DataFrame, loan: pd.DataFrame) -> pd.DataFrame:
     df["loan_amount"] = _num(df["loan_amount"], "Float64")
     df["loan_duration"] = _num(df["loan_duration"], "Int64")
     df["loan_payments"] = _num(df["loan_payments"], "Float64")
-    return df[["account_id", "district_id", "frequency", "date", "loan_id", "loan_date", "loan_amount", "loan_duration", "loan_payments", "loan_status"]]  # fmt: skip
+    return df[[
+        "account_id", "district_id", "frequency", "date", "loan_id",
+        "loan_date", "loan_amount", "loan_duration", "loan_payments", "loan_status",
+    ]]  # fmt: skip
 
 
 def build_order(order: pd.DataFrame) -> pd.DataFrame:

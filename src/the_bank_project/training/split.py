@@ -1,4 +1,7 @@
-"""Divisão cronológica por mês (treino / validação / teste) com meses de folga entre os conjuntos."""
+"""
+    Divisão temporal
+    Este módulo contém a divisão cronológica por mês (treino / validação / teste) com meses de folga entre os conjuntos.
+"""
 
 from dataclasses import dataclass
 
@@ -10,7 +13,9 @@ from the_bank_project.config import SplitConfig
 
 @dataclass(frozen=True)
 class Split:
-    """Máscaras booleanas alinhadas ao dataset e os meses-limite de cada conjunto."""
+    """
+        Máscaras booleanas alinhadas ao dataset e os meses-limite de cada conjunto.
+    """
 
     train: np.ndarray
     val: np.ndarray
@@ -18,7 +23,9 @@ class Split:
     windows: dict[str, tuple[pd.Timestamp, pd.Timestamp]]
 
     def describe(self) -> dict[str, str]:
-        """Janelas e tamanhos legíveis (para tags do MLflow)."""
+        """
+            Janelas e tamanhos legíveis (para tags do MLflow).
+        """
         masks = {"train": self.train, "val": self.val, "test": self.test}
         return {
             f"{k}_window": f"{a.date()}..{b.date()} ({int(masks[k].sum())} linhas)"
@@ -27,14 +34,15 @@ class Split:
 
 
 def chronological_split(timestamps: pd.Series, cfg: SplitConfig) -> Split:
-    """Corta por mês para chegar perto de `train_frac`/`val_frac` das linhas (o resto é teste).
+    """
+        Corta por mês para chegar perto de `train_frac`/`val_frac` das linhas (o resto é teste).
 
-    Os cortes são meses inteiros e há `gap_months` descartados entre um conjunto e o seguinte:
-    o label de uma linha em T é o outflow de T+1, então sem folga o último mês de treino
-    usaria como label um valor que já é feature do primeiro mês de validação.
+        Os cortes são meses inteiros e há `gap_months` descartados entre um conjunto e o seguinte:
+        o label de uma linha em T é o outflow de T+1, então sem folga o último mês de treino
+        usaria como label um valor que já é feature do primeiro mês de validação.
 
-    Raises:
-        ValueError: se algum conjunto ficar vazio.
+        Raises:
+            ValueError: se algum conjunto ficar vazio.
     """
     counts = timestamps.value_counts().sort_index()
     months = counts.index

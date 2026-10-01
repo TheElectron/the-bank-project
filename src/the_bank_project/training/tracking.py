@@ -1,4 +1,7 @@
-"""Configuração do MLflow: tracking URI, experimento e nomes de run."""
+"""
+    Tracking (MLflow)
+    Este módulo contém a configuração do MLflow: tracking URI, experimento e nomes de run.
+"""
 
 from datetime import date
 from pathlib import Path
@@ -9,7 +12,9 @@ from the_bank_project.config import GlobalConfig, Settings
 
 
 def tracking_uri(cfg: GlobalConfig) -> str:
-    """URI do tracking: `MLFLOW_TRACKING_URI` do ambiente > config > SQLite local em `data/mlflow/`."""
+    """
+        URI do tracking: `MLFLOW_TRACKING_URI` do ambiente > config > SQLite local em `data/mlflow/`.
+    """
     uri = Settings().mlflow_tracking_uri or cfg.training.tracking_uri
     if uri:
         return uri
@@ -19,9 +24,10 @@ def tracking_uri(cfg: GlobalConfig) -> str:
 
 
 def configure_mlflow(cfg: GlobalConfig) -> str:
-    """Aponta o MLflow para o tracking configurado e seleciona (criando, se preciso) o experimento.
+    """
+        Aponta o MLflow para o tracking configurado e seleciona (criando, se preciso) o experimento.
 
-    Com SQLite local os artefatos ficam em `data/mlflow/artifacts`; com servidor, quem decide é ele.
+        Com SQLite local os artefatos ficam em `data/mlflow/artifacts`; com servidor, quem decide é ele.
     """
     uri = tracking_uri(cfg)
     mlflow.set_tracking_uri(uri)
@@ -36,5 +42,7 @@ def configure_mlflow(cfg: GlobalConfig) -> str:
 
 
 def run_name(stage: str, model: str, day: date | None = None) -> str:
-    """Nome de run no padrão do projeto: `<etapa>_<modelo>_<data>`."""
+    """
+        Nome de run no padrão do projeto: `<etapa>_<modelo>_<data>`.
+    """
     return f"{stage}_{model}_{(day or date.today()).isoformat()}"

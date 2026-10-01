@@ -1,6 +1,8 @@
-"""Nomes legíveis, agrupamento e unidade das features, para a interface.
+"""
+    Catálogo de features
+    Este módulo contém os nomes legíveis, o agrupamento e a unidade das features, para a interface.
 
-Cada feature do FeatureService precisa constar aqui (há um teste de contrato).
+    Cada feature do FeatureService precisa constar aqui (há um teste de contrato).
 """
 
 from typing import Literal
@@ -11,7 +13,9 @@ Unit = Literal["money", "count", "pct"]
 
 
 class FeatureMeta(BaseModel):
-    """Como mostrar uma feature ao usuário."""
+    """
+        Como mostrar uma feature ao usuário.
+    """
 
     name: str
     label: str

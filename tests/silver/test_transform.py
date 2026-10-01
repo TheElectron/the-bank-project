@@ -139,7 +139,7 @@ def test_merge_fails_if_account_has_two_loans(bronze: dict[str, pd.DataFrame]):
 
 def test_fails_if_client_has_no_disp(bronze: dict[str, pd.DataFrame]):
     bronze["disp"] = bronze["disp"].iloc[:2]
-    with pytest.raises(ValueError, match="sem `disp`"):
+    with pytest.raises(ValueError, match="Falha no merge \\(1:1\\) entre clientes e `disp`"):
         build_silver(bronze)
 
 

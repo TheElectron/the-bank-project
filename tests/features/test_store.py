@@ -92,3 +92,15 @@ def test_cli_returns_1_on_error(calls: list[str], monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(cli, "apply_repo", boom)
     assert cli.main(["apply"]) == 1
+
+
+def test_apply_survives_a_registry_created_with_another_online_store_path(applied: Path):
+    """Registry feito no container (caminho absoluto inexistente aqui) não pode impedir um novo apply."""
+    registry = applied / "data" / "registry.db"
+    from feast.protos.feast.core.Registry_pb2 import Registry
+
+    proto = Registry.FromString(registry.read_bytes())
+    stale = proto.infra.infra_objects.add(infra_object_class_type="feast.infra.online_stores.sqlite.SqliteTable")
+    stale.sqlite_table.path = "/opt/airflow/feature_repo/data/online_store.db"
+    registry.write_bytes(proto.SerializeToString())
+    apply_repo(applied)

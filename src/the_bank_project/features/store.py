@@ -3,17 +3,17 @@
 """
 
 
-import sys
 import logging
+import sys
 import threading
-import pandas as pd
-from pathlib import Path
-from datetime import UTC, datetime
 from collections.abc import Sequence
-from feast.repo_operations import apply_total
-from feast.repo_config import load_repo_config
-from feast import FeatureService, FeatureStore
+from datetime import UTC, datetime
+from pathlib import Path
 
+import pandas as pd
+from feast import FeatureService, FeatureStore
+from feast.repo_config import load_repo_config
+from feast.repo_operations import apply_total
 
 from the_bank_project.config import load_config
 
@@ -28,18 +28,27 @@ def _repo(repo_path: Path | None) -> Path:
 
 
 def open_store(repo_path: Path | None = None) -> FeatureStore:
-    """Inicializa a feature store."""
+    """
+        Inicializa a feature store.
+    """
     return FeatureStore(repo_path=str(_repo(repo_path)))
 
 
 def apply_repo(repo_path: Path | None = None) -> None:
     """
         Registra as views e services do repositório.
+
+        O registry é descartado antes: ele é derivado de `features.py` e guarda o caminho absoluto do online store de
+        quem o criou (`/opt/airflow/...` no container, `/home/...` no host), o que quebrava o `apply` ao alternar entre
+        o Airflow e o `make features`. O online store não é tocado; o `materialize` o repovoa.
     """
     path = _repo(repo_path).resolve()
+    config = load_repo_config(path, path / "feature_store.yaml")
+    registry = config.registry if isinstance(config.registry, str) else config.registry.path
+    (path / registry).unlink(missing_ok=True)
     sys.path.insert(0, str(path))
     try:
-        apply_total(load_repo_config(path, path / "feature_store.yaml"), path, skip_source_validation=False)
+        apply_total(config, path, skip_source_validation=False)
     finally:
         sys.path.remove(str(path))
         sys.modules.pop("features", None)

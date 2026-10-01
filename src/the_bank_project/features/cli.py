@@ -1,13 +1,13 @@
 """
     Feast [CLI]
-    Este módulo contém a CLI para executar a registro das views e carregar a online store.
-    `python -m the_bank_project.features [apply|materialize|all]`              
+    Este módulo contém a CLI para registrar as views e carregar a online store.
+    `python -m the_bank_project.features [apply|materialize|all]`
 """
 
 
-import sys
-import logging
 import argparse
+import logging
+import sys
 from collections.abc import Sequence
 
 from the_bank_project.features.store import apply_repo, materialize_all
@@ -20,7 +20,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     """
         Método responsável por executar o registro das views e carregar a online store.
     """
-    parser = argparse.ArgumentParser(prog="the_bank_project.features", description="[ML] Criação e configuração da feature store.")
+    parser = argparse.ArgumentParser(
+        prog="the_bank_project.features", description="[ML] Criação e configuração da feature store."
+    )
     parser.add_argument(
         "step", nargs="?", choices=["apply", "materialize", "all"], default="all", help="Etapa (padrão: all)."
     )

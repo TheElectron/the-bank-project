@@ -1,6 +1,8 @@
-"""Decisão de re-treino por drift: função pura + estado do cooldown em disco.
+"""
+    Decisão de re-treino
+    Este módulo contém a função pura que decide o re-treino por drift e o estado do cooldown em disco.
 
-O estado fica em `data/monitoring/` (não no banco do Airflow) porque a task roda num venv sem acesso a ele.
+    O estado fica em `data/monitoring/` (não no banco do Airflow) porque a task roda num venv sem acesso a ele.
 """
 
 import json
@@ -21,7 +23,9 @@ Reason = Literal["retrain", "no_drift", "cooldown", "disabled"]
 
 
 class RetrainDecision(BaseModel):
-    """Se o drift deve disparar o re-treino, e por quê."""
+    """
+        Se o drift deve disparar o re-treino, e por quê.
+    """
 
     retrain: bool
     reason: Reason
@@ -30,7 +34,9 @@ class RetrainDecision(BaseModel):
 def should_retrain(
     summary: DriftSummary, last_retrain_at: datetime | None, now: datetime, cfg: MonitoringConfig
 ) -> RetrainDecision:
-    """Decide o re-treino: exige drift no dataset e cooldown vencido (no dia exato do vencimento já libera)."""
+    """
+        Decide o re-treino: exige drift no dataset e cooldown vencido (no dia exato do vencimento já libera).
+    """
     if not cfg.retrain_enabled:
         return RetrainDecision(retrain=False, reason="disabled")
     if not summary.drift_detected:
@@ -41,7 +47,9 @@ def should_retrain(
 
 
 def load_last_retrain(out_dir: Path) -> datetime | None:
-    """Momento do último re-treino disparado por drift, ou None se nunca houve."""
+    """
+        Momento do último re-treino disparado por drift, ou None se nunca houve.
+    """
     path = out_dir / STATE_FILE
     if not path.exists():
         return None
@@ -49,19 +57,22 @@ def load_last_retrain(out_dir: Path) -> datetime | None:
 
 
 def record_retrain(out_dir: Path, now: datetime) -> None:
-    """Grava o disparo (inicia o cooldown)."""
+    """
+        Grava o disparo (inicia o cooldown).
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / STATE_FILE).write_text(json.dumps({"triggered_at": now.isoformat()}))
 
 
 def decide_retrain(cfg: GlobalConfig, now: datetime | None = None, record: bool = True) -> RetrainDecision:
-    """Lê o último resumo e o estado do cooldown; com `record`, um "retrain" já inicia o cooldown.
+    """
+        Lê o último resumo e o estado do cooldown; com `record`, um "retrain" já inicia o cooldown.
 
-    O cooldown é gravado na decisão, não após o disparo: se o disparo falhar, o próximo é só após o cooldown
-    (ou removendo `last_retrain.json`).
+        O cooldown é gravado na decisão, não após o disparo: se o disparo falhar, o próximo é só após o cooldown
+        (ou removendo `last_retrain.json`).
 
-    Raises:
-        FileNotFoundError: se o drift ainda não foi calculado.
+        Raises:
+            FileNotFoundError: se o drift ainda não foi calculado.
     """
     now = now or datetime.now(UTC)
     out_dir = cfg.paths.monitoring

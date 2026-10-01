@@ -4,8 +4,9 @@
 """
 
 import logging
-import pandas as pd
 from pathlib import Path
+
+import pandas as pd
 
 from the_bank_project.gold.account import build_gold_account
 from the_bank_project.gold.checks import check_gold

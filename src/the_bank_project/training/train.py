@@ -1,8 +1,13 @@
-"""Treino dos candidatos: seleção na validação, avaliação única no teste, tudo no MLflow."""
+"""
+    Treino dos candidatos
+    Este módulo contém o treino dos candidatos: seleção na validação, avaliação única no teste, tudo no MLflow.
+"""
 
 import logging
+import time
 from dataclasses import dataclass
 from datetime import date
+from typing import Any
 
 import mlflow
 import numpy as np
@@ -25,7 +30,9 @@ CHALLENGER = "challenger"
 
 @dataclass(frozen=True)
 class ModelResult:
-    """Resultado de um candidato (ou baseline): métricas de validação e de teste."""
+    """
+        Resultado de um candidato (ou baseline): métricas de validação e de teste.
+    """
 
     name: str
     run_id: str
@@ -35,7 +42,9 @@ class ModelResult:
 
 @dataclass(frozen=True)
 class TrainingResult:
-    """Resumo do treino: todos os runs, o vencedor pela validação e a versão registrada."""
+    """
+        Resumo do treino: todos os runs, o vencedor pela validação e a versão registrada.
+    """
 
     baselines: list[ModelResult]
     candidates: list[ModelResult]
@@ -44,13 +53,24 @@ class TrainingResult:
 
 
 def prepare(cfg: GlobalConfig, dataset: Dataset | None = None) -> tuple[Dataset, Split]:
-    """Carrega o dataset (Feast + labels) e o divide cronologicamente."""
+    """
+        Carrega o dataset (Feast + labels) e o divide cronologicamente.
+    """
     ds = dataset or load_dataset(cfg.paths.gold, cfg.training.feature_service, cfg.feast.repo)
     return ds, chronological_split(ds.timestamps, cfg.training.split)
 
 
 def _log_metrics(prefix: str, metrics: dict[str, float]) -> None:
     mlflow.log_metrics({f"{prefix}_{k}": v for k, v in metrics.items()})
+
+
+def _timed_fit(model: Any, X: pd.DataFrame, y: np.ndarray) -> tuple[Any, float]:
+    """
+        Ajusta o modelo e devolve `(modelo, segundos)` medidos só sobre o `fit`.
+    """
+    start = time.perf_counter()
+    model.fit(X, y)
+    return model, time.perf_counter() - start
 
 
 def _run_baselines(ds: Dataset, split: Split, day: date) -> list[ModelResult]:
@@ -69,10 +89,11 @@ def _run_baselines(ds: Dataset, split: Split, day: date) -> list[ModelResult]:
 def _select_params(
     cand: Candidate, ds: Dataset, split: Split, cfg: GlobalConfig, tuned: BestParams | None = None
 ) -> tuple[Params, dict[str, float]]:
-    """Ajusta cada configuração só no treino e escolhe a de menor MAE na validação.
+    """
+        Ajusta cada configuração só no treino e escolhe a de menor MAE na validação.
 
-    Com parâmetros ajustados (`make tune`) para o modelo, só eles são avaliados: o sorteio simples fica
-    como fallback quando ainda não há `best_params.yaml`.
+        Com parâmetros ajustados (`make tune`) para o modelo, só eles são avaliados: o sorteio simples fica
+        como fallback quando ainda não há `best_params.yaml`.
     """
     tc = cfg.training
     best: tuple[Params, dict[str, float]] | None = None
@@ -80,10 +101,13 @@ def _select_params(
     candidates = [{**cand.defaults, **tuned.models[cand.name].params}] if tuned and from_tuning else None
     for i, params in enumerate(candidates or trial_params(cand, tc.n_tuning_trials, tc.seed)):
         with mlflow.start_run(run_name=f"trial_{cand.name}_{i}", nested=True):
-            model = make_estimator(cand, params, tc.seed, tc.log_target).fit(ds.X[split.train], ds.y[split.train])
+            model, fit_seconds = _timed_fit(
+                make_estimator(cand, params, tc.seed, tc.log_target), ds.X[split.train], ds.y[split.train]
+            )
             val = regression_metrics(ds.y[split.val], model.predict(ds.X[split.val]))
             mlflow.log_params(params)
             _log_metrics("val", val)
+            mlflow.log_metric("fit_seconds", fit_seconds)
         if best is None or val["mae"] < best[1]["mae"]:
             best = (params, val)
     assert best is not None
@@ -98,13 +122,16 @@ def _run_candidate(
     with mlflow.start_run(run_name=run_name("treino", cand.name, day)) as run:
         params, val = _select_params(cand, ds, split, cfg, tuned)
         fit_mask = split.train | split.val  # o modelo final usa treino + validação; o teste fica intocado
-        final = make_estimator(cand, params, tc.seed, tc.log_target).fit(ds.X[fit_mask], ds.y[fit_mask])
+        final, fit_seconds = _timed_fit(
+            make_estimator(cand, params, tc.seed, tc.log_target), ds.X[fit_mask], ds.y[fit_mask]
+        )
         pred = final.predict(ds.X[split.test])
         test = regression_metrics(ds.y[split.test], pred)
         mlflow.log_params({**params, "log_target": tc.log_target and cand.supports_log_target, "seed": tc.seed})
         _log_metrics("val", val)
         _log_metrics("test", test)
         mlflow.log_metric("test_skill_vs_naive", skill_score(test["mae"], naive_mae))
+        mlflow.log_metric("fit_seconds", fit_seconds)  # do ajuste final (treino + validação)
         mlflow.set_tags({"model_kind": "candidate", "algorithm": cand.name, "feature_service": tc.feature_service,
                          "params_source": "tuned" if tuned and cand.name in tuned.models else "random_search",
                          **split.describe()})  # fmt: skip
@@ -122,10 +149,11 @@ def _run_candidate(
 
 
 def run_training(cfg: GlobalConfig, dataset: Dataset | None = None, day: date | None = None) -> TrainingResult:
-    """Treina todos os candidatos, registra o vencedor pela **validação** como `challenger`.
+    """
+        Treina todos os candidatos, registra o vencedor pela **validação** como `challenger`.
 
-    O teste só é medido depois da seleção, uma vez por modelo, e nunca decide nada aqui: a
-    promoção a `champion` é do gate (`registry.promote`).
+        O teste só é medido depois da seleção, uma vez por modelo, e nunca decide nada aqui: a
+        promoção a `champion` é do gate (`registry.promote`).
     """
     day = day or date.today()
     ds, split = prepare(cfg, dataset)

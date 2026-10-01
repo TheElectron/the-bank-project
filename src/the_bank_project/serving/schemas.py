@@ -1,4 +1,7 @@
-"""Contratos de entrada e saída da API (Pydantic)."""
+"""
+    Schemas da API
+    Este módulo contém os contratos de entrada e saída da API (Pydantic).
+"""
 
 from datetime import date, datetime
 from typing import Any, Literal
@@ -9,7 +12,9 @@ Split = Literal["treino", "validacao", "teste", "folga"]  # folga: meses descart
 
 
 class PredictRequest(BaseModel):
-    """Pedido de previsão para uma ou mais contas."""
+    """
+        Pedido de previsão para uma ou mais contas.
+    """
 
     account_ids: list[str] = Field(min_length=1, description="Contas a prever (sem repetição).")
     reference_month: date | None = Field(
@@ -28,7 +33,9 @@ class PredictRequest(BaseModel):
 
 
 class ModelRef(BaseModel):
-    """Modelo que gerou as previsões."""
+    """
+        Modelo que gerou as previsões.
+    """
 
     name: str
     version: str
@@ -36,7 +43,9 @@ class ModelRef(BaseModel):
 
 
 class Prediction(BaseModel):
-    """Previsão de saídas do mês seguinte para uma conta."""
+    """
+        Previsão de saídas do mês seguinte para uma conta.
+    """
 
     account_id: str
     features_as_of: date = Field(description="Mês T (último dia) das features usadas.")
@@ -44,7 +53,7 @@ class Prediction(BaseModel):
     predicted_next_month_outflow: float
     actual_next_month_outflow: float | None = Field(default=None, description="Valor real de T+1, se já conhecido.")
     baseline_next_month_outflow: float | None = Field(
-        default=None, description="Ingênuo: média das saídas dos 3 meses."
+        default=None, description="Baseline sem treino: média das saídas dos 3 meses até T."
     )
     error: float | None = Field(default=None, description="Previsto menos real.")
     split: Split | None = Field(default=None, description="Conjunto a que o mês T pertence no treino do modelo.")
@@ -52,7 +61,9 @@ class Prediction(BaseModel):
 
 
 class PredictResponse(BaseModel):
-    """Previsões, na ordem do pedido, e as contas sem features."""
+    """
+        Previsões, na ordem do pedido, e as contas sem features.
+    """
 
     model: ModelRef
     predictions: list[Prediction]
@@ -60,7 +71,9 @@ class PredictResponse(BaseModel):
 
 
 class AccountInfo(BaseModel):
-    """Atributos cadastrais de uma conta (feature view `account_static`)."""
+    """
+        Atributos cadastrais de uma conta (feature view `account_static`).
+    """
 
     account_id: str
     district_name: str | None = None
@@ -75,14 +88,18 @@ class AccountInfo(BaseModel):
 
 
 class AccountPage(BaseModel):
-    """Página de contas da busca."""
+    """
+        Página de contas da busca.
+    """
 
     total: int
     items: list[AccountInfo]
 
 
 class MonthInfo(BaseModel):
-    """Mês de referência disponível para previsão."""
+    """
+        Mês de referência disponível para previsão.
+    """
 
     reference_month: date | None = Field(description="Último dia do mês; nulo = mais recente (futuro).")
     label: str
@@ -92,7 +109,9 @@ class MonthInfo(BaseModel):
 
 
 class HistoryPoint(BaseModel):
-    """Um mês do histórico de uma conta."""
+    """
+        Um mês do histórico de uma conta.
+    """
 
     month: date
     outflow: float | None
@@ -101,7 +120,9 @@ class HistoryPoint(BaseModel):
 
 
 class History(BaseModel):
-    """Histórico recente de uma conta até o mês T, mais o valor real de T+1 (se conhecido)."""
+    """
+        Histórico recente de uma conta até o mês T, mais o valor real de T+1 (se conhecido).
+    """
 
     account_id: str
     reference_month: date
@@ -110,7 +131,9 @@ class History(BaseModel):
 
 
 class ComparisonRow(BaseModel):
-    """Um modelo (ou baseline) no comparativo do teste."""
+    """
+        Um modelo (ou baseline) no comparativo do teste.
+    """
 
     name: str
     label: str
@@ -120,7 +143,9 @@ class ComparisonRow(BaseModel):
 
 
 class ModelInfo(BaseModel):
-    """O campeão carregado, seu desempenho e as features que ele usa."""
+    """
+        O campeão carregado, seu desempenho e as features que ele usa.
+    """
 
     name: str
     version: str
@@ -138,7 +163,9 @@ class ModelInfo(BaseModel):
 
 
 class ErrorStats(BaseModel):
-    """MAE, RMSE e R² de um preditor."""
+    """
+        MAE, RMSE e R² de um preditor.
+    """
 
     mae: float
     rmse: float
@@ -146,7 +173,9 @@ class ErrorStats(BaseModel):
 
 
 class MonthError(BaseModel):
-    """Erro médio (MAE) do modelo e do baseline num mês de teste."""
+    """
+        Erro médio (MAE) do modelo e do baseline num mês de teste.
+    """
 
     month: date
     n: int
@@ -155,7 +184,9 @@ class MonthError(BaseModel):
 
 
 class ScatterPoint(BaseModel):
-    """Uma conta-mês do teste: valor real, previsto e ingênuo."""
+    """
+        Uma conta-mês do teste: valor real, previsto e ingênuo.
+    """
 
     actual: float
     predicted: float
@@ -163,7 +194,9 @@ class ScatterPoint(BaseModel):
 
 
 class BandError(BaseModel):
-    """Erro do modelo e do baseline nas contas-mês cujo valor real cai numa faixa de gasto."""
+    """
+        Erro do modelo e do baseline nas contas-mês cujo valor real cai numa faixa de gasto.
+    """
 
     label: str
     lower: float
@@ -174,7 +207,9 @@ class BandError(BaseModel):
 
 
 class EvaluationReport(BaseModel):
-    """Desempenho do campeão no conjunto de teste inteiro, recalculado com o modelo carregado."""
+    """
+        Desempenho do campeão no conjunto de teste inteiro, recalculado com o modelo carregado.
+    """
 
     model_version: str
     window: str
@@ -187,25 +222,31 @@ class EvaluationReport(BaseModel):
     by_month: list[MonthError]
     by_band: list[BandError]
     points: list[ScatterPoint]
-    axis_max: float = Field(description="Limite dos eixos do dispersão (percentil 99 do valor real).")
+    axis_max: float = Field(description="Limite dos eixos do gráfico de dispersão (percentil 99 do valor real).")
 
 
 class EvaluationResponse(BaseModel):
-    """`ready=False` enquanto o relatório é calculado (alguns segundos após o modelo carregar)."""
+    """
+        `ready=False` enquanto o relatório é calculado (alguns segundos após o modelo carregar).
+    """
 
     ready: bool
     report: EvaluationReport | None = None
 
 
 class DriftedFeature(BaseModel):
-    """Feature com drift e o score (Wasserstein normalizada) que a colocou acima do limiar."""
+    """
+        Feature com drift e o score (Wasserstein normalizada) que a colocou acima do limiar.
+    """
 
     name: str
     score: float
 
 
 class MonitoringStatus(BaseModel):
-    """Último relatório de drift e último re-treino disparado por ele (`available=False`: ainda não rodou)."""
+    """
+        Último relatório de drift e último re-treino disparado por ele (`available=False`: ainda não rodou).
+    """
 
     available: bool
     drift_detected: bool | None = None

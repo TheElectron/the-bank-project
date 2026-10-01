@@ -1,4 +1,7 @@
-"""Ciclo de vida no MLflow Model Registry: aliases `challenger` e `champion` e o gate de promoção."""
+"""
+    Model Registry (MLflow)
+    Este módulo contém o ciclo de vida no registry: aliases `challenger` e `champion` e o gate de promoção.
+"""
 
 import logging
 from dataclasses import dataclass
@@ -23,7 +26,9 @@ Decision = Literal["promoted_first", "promoted", "kept", "noop"]
 
 @dataclass(frozen=True)
 class Promotion:
-    """Resultado do gate. `*_mae` são medidos no **mesmo** teste, agora."""
+    """
+        Resultado do gate. `*_mae` são medidos no **mesmo** teste, agora.
+    """
 
     decision: Decision
     challenger_version: str
@@ -45,13 +50,14 @@ def _test_mae(name: str, alias: str, ds: Dataset, mask: np.ndarray) -> float:
 
 
 def promote(cfg: GlobalConfig, dataset: Dataset | None = None) -> Promotion:
-    """Promove o `challenger` a `champion` só se tiver MAE de teste **estritamente menor**.
+    """
+        Promove o `challenger` a `champion` só se tiver MAE de teste **estritamente menor**.
 
-    Os dois modelos são reavaliados agora no mesmo teste (o dataset pode ter mudado desde que
-    o campeão foi treinado). Sem campeão, o challenger assume.
+        Os dois modelos são reavaliados agora no mesmo teste (o dataset pode ter mudado desde que
+        o campeão foi treinado). Sem campeão, o challenger assume.
 
-    Raises:
-        LookupError: se não houver `challenger` registrado (rode o treino antes).
+        Raises:
+            LookupError: se não houver `challenger` registrado (rode o treino antes).
     """
     configure_mlflow(cfg)
     client, name = MlflowClient(), cfg.training.registered_model

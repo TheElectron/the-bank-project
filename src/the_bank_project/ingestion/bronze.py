@@ -4,8 +4,10 @@
 """
 
 import logging
-import pandas as pd
 from pathlib import Path
+
+import pandas as pd
+
 from the_bank_project.io import write_parquet_atomic
 
 logger = logging.getLogger(__name__)

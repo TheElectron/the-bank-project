@@ -245,9 +245,9 @@ async function runPredict() {
 /* ---------- resultados ---------- */
 function splitBadge(pred, info) {
   const icon = (d) => svg("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": 2.2, "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" }, svg("path", { d }));
-  if (!pred.split) return h("span", { class: "badge future" }, icon("M12 3v18M3 12h18"), "Previsão do futuro do dataset");
+  if (!pred.split) return h("span", { class: "badge future" }, icon("M12 3v18M3 12h18"), "Previsão para um mês que o dataset não tem");
   if (pred.split === "teste") return h("span", { class: "badge test" }, icon("M5 12l4 4 10-10"), "Mês de teste · o modelo nunca viu estes valores");
-  if (pred.split === "folga") return h("span", { class: "badge train" }, icon("M5 12h14"), "Mês fora do treino (folga)");
+  if (pred.split === "folga") return h("span", { class: "badge train" }, icon("M5 12h14"), "Mês de folga · fora do treino e do teste");
   return h("span", { class: "badge train" }, icon("M12 8v5M12 17h.01"), "Mês usado no treino · resultado tende a ser otimista");
 }
 
@@ -279,7 +279,7 @@ function renderResults() {
         : "Este mês ainda não existe no dataset, então não há valor real para comparar: é uma previsão do que vem a seguir. Escolha um mês anterior para ver o modelo contra a realidade.")),
     splitBadge(first, info)));
   if (res.not_found.length) {
-    root.append(h("div", { class: "err-box" }, `Sem dados neste mês para: ${res.not_found.map((i) => `conta ${i}`).join(", ")}. Elas foram ignoradas.`));
+    root.append(h("div", { class: "err-box" }, `Sem dados neste mês para: ${res.not_found.map((i) => `conta ${i}`).join(", ")}. ${res.not_found.length === 1 ? "Ela foi ignorada" : "Elas foram ignoradas"}.`));
   }
 
   // indicadores da seleção
@@ -358,7 +358,7 @@ function selectDetail(id) {
 /* ---------- detalhe da conta ---------- */
 function detailCard(p) {
   const info = state.selected.get(p.account_id);
-  const tags = info ? [info.district_name, info.region, info.owner_gender ? GENDER[info.owner_gender] : null, FREQ[info.frequency] ?? info.frequency, info.has_loan ? "Com empréstimo" : null, info.has_card ? "Com cartão" : null, info.dependent_count ? `${info.dependent_count} dependente` : null].filter(Boolean) : [];
+  const tags = info ? [info.district_name, info.region, info.owner_gender ? GENDER[info.owner_gender] : null, FREQ[info.frequency] ?? info.frequency, info.has_loan ? "Com empréstimo" : null, info.has_card ? "Com cartão" : null, info.dependent_count ? `${info.dependent_count} ${info.dependent_count === 1 ? "dependente" : "dependentes"}` : null].filter(Boolean) : [];
   const top = new Set([...state.model.features].filter((f) => f.importance != null).sort((a, b) => b.importance - a.importance).slice(0, 5).map((f) => f.name));
   const groups = new Map();
   for (const f of state.model.features) { if (!groups.has(f.group)) groups.set(f.group, []); groups.get(f.group).push(f); }

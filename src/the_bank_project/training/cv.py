@@ -1,4 +1,6 @@
-"""Dobras de validação cruzada temporal (janela expansiva, por mês) com folga entre treino e validação."""
+"""
+    Este módulo contém funções para realizar validação cruzada (temporal).
+"""
 
 import numpy as np
 import pandas as pd
@@ -7,10 +9,9 @@ import pandas as pd
 def expanding_folds(
     timestamps: pd.Series, mask: np.ndarray, n_folds: int, gap_months: int
 ) -> list[tuple[np.ndarray, np.ndarray]]:
-    """Divide os meses de `mask` em `n_folds + 1` blocos; a dobra k valida no bloco k e treina em tudo antes dele.
-
-    A validação nunca antecede o treino, e `gap_months` meses antes do bloco são descartados: o label de
-    T é o outflow de T+1, então sem folga o último mês de treino usaria como label uma feature da validação.
+    """
+        Divide os meses de `mask` em `n_folds + 1` blocos; 
+        a dobra k valida no bloco k e treina em tudo antes dele.
 
     Returns:
         Lista de `(máscara de treino, máscara de validação)`, alinhadas ao dataset, da mais antiga à mais recente.

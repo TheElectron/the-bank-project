@@ -1,7 +1,9 @@
-"""Drift de dados: compara as features do treino com as dos meses mais recentes (Evidently).
+"""
+    Drift de dados (Evidently)
+    Este módulo contém funções que comparam as features do treino com as dos meses mais recentes.
 
-O dataset é histórico, então o "dado atual" é um replay temporal: a referência são os meses que o
-modelo viu (treino + validação) e a janela atual são os últimos meses da Gold, que caem no teste.
+    O dataset é histórico, então o "dado atual" é um replay temporal: a referência são os meses que o
+    modelo viu (treino + validação) e a janela atual são os últimos meses da Gold, que caem no teste.
 """
 
 import logging
@@ -27,14 +29,18 @@ SUMMARY_FILE = "drift_summary.json"
 
 
 class FeatureDrift(BaseModel):
-    """Drift de uma feature: distância de Wasserstein normalizada pelo desvio da referência."""
+    """
+        Drift de uma feature: distância de Wasserstein normalizada pelo desvio da referência.
+    """
 
     score: float
     drifted: bool
 
 
 class DriftSummary(BaseModel):
-    """Resultado do drift, gravado em JSON (e lido pelas etapas seguintes do pipeline)."""
+    """
+        Resultado do drift, gravado em JSON (e lido pelas etapas seguintes do pipeline).
+    """
 
     reference_window: str
     current_window: str
@@ -51,10 +57,11 @@ class DriftSummary(BaseModel):
 
 
 def load_summary(out_dir: Path) -> DriftSummary:
-    """Lê o resumo gravado por `run_drift`.
+    """
+        Lê o resumo gravado por `run_drift`.
 
-    Raises:
-        FileNotFoundError: se o drift ainda não foi calculado.
+        Raises:
+            FileNotFoundError: se o drift ainda não foi calculado.
     """
     path = out_dir / SUMMARY_FILE
     if not path.exists():
@@ -63,13 +70,14 @@ def load_summary(out_dir: Path) -> DriftSummary:
 
 
 def select_windows(ds: Dataset, split: Split, current_months: int) -> tuple[pd.DataFrame, pd.DataFrame, str, str]:
-    """Referência (treino + validação) e janela atual (os `current_months` últimos meses do dataset).
+    """
+        Referência (treino + validação) e janela atual (os `current_months` últimos meses do dataset).
 
-    Returns:
-        Features da referência, features da janela atual e a descrição legível de cada janela.
+        Returns:
+            Features da referência, features da janela atual e a descrição legível de cada janela.
 
-    Raises:
-        ValueError: se `current_months` for inválido ou a janela atual invadir a referência.
+        Raises:
+            ValueError: se `current_months` for inválido ou a janela atual invadir a referência.
     """
     months = pd.Series(ds.timestamps.unique()).sort_values()
     if not 1 <= current_months <= len(months):
@@ -91,14 +99,15 @@ def select_windows(ds: Dataset, split: Split, current_months: int) -> tuple[pd.D
 def compute_drift(
     reference: pd.DataFrame, current: pd.DataFrame, cfg: MonitoringConfig
 ) -> tuple["Snapshot", DriftSummary]:
-    """Drift por feature (Wasserstein normalizada) e no dataset (fração de features com drift).
+    """
+        Drift por feature (Wasserstein normalizada) e no dataset (fração de features com drift).
 
-    Returns:
-        O relatório do Evidently (para o HTML) e o resumo. As janelas ficam vazias no resumo:
-            quem as conhece (`run_drift`) as preenche.
+        Returns:
+            O relatório do Evidently (para o HTML) e o resumo. As janelas ficam vazias no resumo:
+                quem as conhece (`run_drift`) as preenche.
 
-    Raises:
-        ValueError: se alguma janela estiver vazia ou as colunas não baterem.
+        Raises:
+            ValueError: se alguma janela estiver vazia ou as colunas não baterem.
     """
     if reference.empty or current.empty:
         raise ValueError("Referência e janela atual precisam ter linhas.")
@@ -132,12 +141,13 @@ def compute_drift(
 
 
 def run_drift(cfg: GlobalConfig, dataset: Dataset | None = None, out_dir: Path | None = None) -> DriftSummary:
-    """Calcula o drift (referência x últimos meses) e grava o relatório HTML e o resumo JSON.
+    """
+        Calcula o drift (referência x últimos meses) e grava o relatório HTML e o resumo JSON.
 
-    Args:
-        cfg: configuração global.
-        dataset: dataset já carregado (padrão: labels + features do Feast, como no treino).
-        out_dir: onde gravar (padrão: `data/monitoring/`).
+        Args:
+            cfg: configuração global.
+            dataset: dataset já carregado (padrão: labels + features do Feast, como no treino).
+            out_dir: onde gravar (padrão: `data/monitoring/`).
     """
     ds = dataset or load_dataset(cfg.paths.gold, cfg.training.feature_service, cfg.feast.repo)
     split = chronological_split(ds.timestamps, cfg.training.split)

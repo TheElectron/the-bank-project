@@ -7,13 +7,11 @@ help:  ## Lista os comandos
 install:  ## Instala as dependências (Poetry)
 	poetry install
 
-lint:  ## Ruff (lint + checagem de formatação)
+lint:  ## Ruff (lint)
 	poetry run ruff check .
-	poetry run ruff format --check .
 
-format:  ## Corrige lint e formata o código
+format:  ## Corrige o que o lint consegue (sem `ruff format`: ele desfaz o estilo de docstring)
 	poetry run ruff check --fix .
-	poetry run ruff format .
 
 typecheck:  ## mypy
 	poetry run mypy

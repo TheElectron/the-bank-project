@@ -1,4 +1,7 @@
-"""Monitoramento de drift de dados (Evidently) e publicação do resumo no Prometheus."""
+"""
+    Monitoramento
+    Drift de dados (Evidently) e publicação do resumo no Prometheus.
+"""
 
 from the_bank_project.monitoring.drift import (
     DriftSummary,

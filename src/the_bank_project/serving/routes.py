@@ -1,4 +1,8 @@
-"""Endpoints: contrato público (`/predict`), operação (`/health`, `/metrics`) e apoio à interface (`/api/*`)."""
+"""
+    Endpoints da API
+    Este módulo contém o contrato público (`/predict`), a operação (`/health`, `/metrics`)
+    e o apoio à interface (`/api/*`).
+"""
 
 from datetime import date
 from typing import Annotated, Any
@@ -31,7 +35,9 @@ def get_state(request: Request) -> AppState:
 
 
 def get_bundle(state: Annotated[AppState, Depends(get_state)]) -> ModelBundle:
-    """O campeão carregado; 503 enquanto não houver um com o alias `champion`."""
+    """
+        O campeão carregado; 503 enquanto não houver um com o alias `champion`.
+    """
     bundle = state.models.bundle
     if bundle is None:
         raise HTTPException(503, "Nenhum modelo com o alias 'champion' está registrado. Rode o treino e o gate.")
@@ -58,7 +64,9 @@ def _account_or_404(state: AppState, account_id: str) -> AccountInfo:
 
 @router.post("/predict", response_model=PredictResponse, tags=["previsão"])
 def predict(body: PredictRequest, state: State, bundle: Bundle) -> PredictResponse:
-    """Previsão de saídas do mês seguinte. Sem `reference_month`, usa as features mais recentes (online store)."""
+    """
+        Previsão de saídas do mês seguinte. Sem `reference_month`, usa as features mais recentes (online store).
+    """
     if len(body.account_ids) > state.cfg.serving.max_batch:
         raise HTTPException(422, f"No máximo {state.cfg.serving.max_batch} contas por chamada.")
     return state.service.predict(bundle, body.account_ids, _month(body.reference_month), body.include_features)
@@ -69,7 +77,9 @@ def predict(body: PredictRequest, state: State, bundle: Bundle) -> PredictRespon
 
 @router.get("/health", tags=["operação"])
 def health(state: State, response: Response) -> dict[str, Any]:
-    """Estado da API: campeão carregado e tamanho do catálogo. 503 se não houver modelo."""
+    """
+        Estado da API: campeão carregado e tamanho do catálogo. 503 se não houver modelo.
+    """
     bundle = state.models.bundle
     if bundle is None:
         response.status_code = 503
@@ -86,7 +96,9 @@ def health(state: State, response: Response) -> dict[str, Any]:
 
 @router.get("/metrics", tags=["operação"])
 def metrics(state: State) -> Response:
-    """Métricas no formato Prometheus."""
+    """
+        Métricas no formato Prometheus.
+    """
     return Response(state.metrics.render(), media_type="text/plain; version=0.0.4")
 
 
@@ -95,26 +107,34 @@ def metrics(state: State) -> Response:
 
 @router.get("/api/model", response_model=ModelInfo, tags=["interface"])
 def model(bundle: Bundle) -> ModelInfo:
-    """O campeão, seu desempenho no teste (contra os baselines) e as features que usa."""
+    """
+        O campeão, seu desempenho no teste (contra os baselines) e as features que usa.
+    """
     return bundle.info
 
 
 @router.get("/api/evaluation", response_model=EvaluationResponse, tags=["interface"])
 def evaluation(state: State, bundle: Bundle) -> EvaluationResponse:
-    """Desempenho do campeão em todo o conjunto de teste (calculado em segundo plano após a carga do modelo)."""
+    """
+        Desempenho do campeão em todo o conjunto de teste (calculado em segundo plano após a carga do modelo).
+    """
     report = state.evaluation.get(bundle.info.version)
     return EvaluationResponse(ready=report is not None, report=report)
 
 
 @router.get("/api/monitoring", response_model=MonitoringStatus, tags=["interface"])
 def monitoring(state: State) -> MonitoringStatus:
-    """Último relatório de drift e último re-treino disparado por ele. Não depende do campeão."""
+    """
+        Último relatório de drift e último re-treino disparado por ele. Não depende do campeão.
+    """
     return read_status(state.cfg)
 
 
 @router.get("/api/months", response_model=list[MonthInfo], tags=["interface"])
 def months(state: State) -> list[MonthInfo]:
-    """Meses de referência disponíveis, com o conjunto do treino a que cada um pertence."""
+    """
+        Meses de referência disponíveis, com o conjunto do treino a que cada um pertence.
+    """
     return state.catalog.months()
 
 
@@ -126,7 +146,9 @@ def accounts(
     limit: int = Query(30, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> AccountPage:
-    """Busca contas disponíveis no mês (todas, se omitido) cujo id contém `search`."""
+    """
+        Busca contas disponíveis no mês (todas, se omitido) cujo id contém `search`.
+    """
     total, items = state.catalog.search(_month(reference_month), search.strip(), limit, offset)
     return AccountPage(total=total, items=items)
 
@@ -135,13 +157,17 @@ def accounts(
 def sample(
     state: State, reference_month: date | None = None, n: int = Query(5, ge=1, le=50), seed: int | None = None
 ) -> list[AccountInfo]:
-    """Contas sorteadas entre as disponíveis no mês."""
+    """
+        Contas sorteadas entre as disponíveis no mês.
+    """
     return state.catalog.sample(_month(reference_month), n, seed)
 
 
 @router.get("/api/accounts/{account_id}", response_model=AccountInfo, tags=["interface"])
 def account(account_id: str, state: State) -> AccountInfo:
-    """Atributos cadastrais da conta."""
+    """
+        Atributos cadastrais da conta.
+    """
     return _account_or_404(state, account_id)
 
 
@@ -149,6 +175,8 @@ def account(account_id: str, state: State) -> AccountInfo:
 def history(
     account_id: str, state: State, reference_month: date, months: int | None = Query(None, ge=1, le=36)
 ) -> History:
-    """Entradas, saídas e saldo até o mês T e o valor real de T+1, quando conhecido."""
+    """
+        Entradas, saídas e saldo até o mês T e o valor real de T+1, quando conhecido.
+    """
     _account_or_404(state, account_id)
     return state.service.history(account_id, pd.Timestamp(reference_month), months or state.cfg.serving.history_months)

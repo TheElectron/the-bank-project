@@ -1,6 +1,7 @@
-""" 
-    Este módulo constrói a tabela `gold_account_monthly_movements`, 
-    consolidando uma visão mensal por das movimentações de uma conta a partir das transações realizadas.
+"""
+    Gold mensal
+    Este módulo contém as funções que constroem a tabela `gold_account_monthly_movements`,
+    consolidando a visão mensal das movimentações de cada conta a partir das transações.
 """
 
 import numpy as np

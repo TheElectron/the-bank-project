@@ -1,4 +1,7 @@
-"""Dataset de treino: labels + features do Feast (join point-in-time)."""
+"""
+    Dataset de treino
+    Este módulo contém a montagem do dataset: labels + features do Feast (join point-in-time).
+"""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,7 +16,9 @@ KEYS = ["account_id", "event_timestamp"]
 
 @dataclass(frozen=True)
 class Dataset:
-    """Uma linha por (conta, mês T), ordenadas no tempo. `X` só tem as features do Feast."""
+    """
+        Uma linha por (conta, mês T), ordenadas no tempo. `X` só tem as features do Feast.
+    """
 
     X: pd.DataFrame
     y: pd.Series
@@ -21,11 +26,12 @@ class Dataset:
 
 
 def load_dataset(gold_dir: Path, feature_service: str, repo_path: Path | None = None) -> Dataset:
-    """Junta os labels às features vigentes em cada `event_timestamp`.
+    """
+        Junta os labels às features vigentes em cada `event_timestamp`.
 
-    Raises:
-        FileNotFoundError: se os labels não existirem.
-        ValueError: se o Feast não devolver features para alguma linha dos labels.
+        Raises:
+            FileNotFoundError: se os labels não existirem.
+            ValueError: se o Feast não devolver features para alguma linha dos labels.
     """
     path = gold_dir / f"{LABELS_TABLE}.parquet"
     if not path.exists():
